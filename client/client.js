@@ -202,6 +202,8 @@ window.__ModuleLoader__.load({
             if (res !== null && typeof res === "object" && res.ok === true) {
               showBackupResult(body, res.backup, res.bytesLabel);
               actions.remove();
+              // 备份已按提醒完成：顺带关闭服务端待展示提醒，避免刷新页面后同一条提醒再次弹出。
+              void post("/ds-session-keeper/ack", { nonce: reminder.nonce }).catch(() => {});
               notifyOS("会话日志已备份", `已复制 ${res.backup.copied} 个文件（${res.bytesLabel}）`);
             } else {
               showBackupError(body, res !== null && typeof res === "object" && typeof res.error === "string" ? res.error : "未知错误", () => {
