@@ -1,10 +1,10 @@
 /**
- * dsh-session-keeper — server half.
+ * dsh-log-memory — server half.
  *
- * 每 intervalMinutes 生成一次待展示提醒，浏览器经 GET /ds-session-keeper/state
- * 轮询取走弹窗；POST /ds-session-keeper/backup 一键把 ~/.dsh/sessions 下的
+ * 每 intervalMinutes 生成一次待展示提醒，浏览器经 GET /ds-log-memory/state
+ * 轮询取走弹窗；POST /ds-log-memory/backup 一键把 ~/.dsh/sessions 下的
  * 会话日志（session.jsonl / session.jsonl.zstd）增量复制到
- * backupDir/<时间戳>/。索引持久化在 profile 目录 session-keeper.json，
+ * backupDir/<时间戳>/。索引持久化在 profile 目录 log-memory.json，
  * 按「相对路径:大小:mtime」跳过未变化的文件，日常增量只有几 KB。
  *
  * 约定：
@@ -26,7 +26,7 @@ import { homedir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 
 /** 稳定插件名（profile 组合中的行 id）。 */
-export const name = "session-keeper";
+export const name = "log-memory";
 
 /** 会话日志文件名（新格式 .jsonl.zstd，旧格式 .jsonl）。 */
 const ARTIFACT_RE = /^session\.jsonl(\.zstd)?$/;
@@ -136,12 +136,12 @@ export function apply(ctx, config = {}) {
   const backupInsideSessions =
     backupDir === sessionsDir || backupDir.startsWith(sessionsDir + sep) || backupDir.startsWith(sessionsDir + "/");
 
-  const statePath = join(home, "profiles", profile, "session-keeper.json");
+  const statePath = join(home, "profiles", profile, "log-memory.json");
 
   const log = (level, msg) => {
     try {
       if (ctx.logger !== undefined && ctx.logger !== null && typeof ctx.logger[level] === "function") {
-        ctx.logger[level](`[session-keeper] ${msg}`);
+        ctx.logger[level](`[log-memory] ${msg}`);
       }
     } catch {
       /* 日志失败不影响功能 */
@@ -233,7 +233,7 @@ export function apply(ctx, config = {}) {
       clearTimeout(first);
       if (timer !== null) clearTimeout(timer);
     };
-  }, "session-keeper: reminder timer");
+  }, "log-memory: reminder timer");
 
   // ---- 备份 ----
   const doBackup = () => {
@@ -335,11 +335,11 @@ export function apply(ctx, config = {}) {
             path,
             handler,
           }),
-        `session-keeper: route ${path}`,
+        `log-memory: route ${path}`,
       );
     };
 
-    route("/ds-session-keeper/state", (req, res) => {
+    route("/ds-log-memory/state", (req, res) => {
       if (req.method !== "GET" && req.method !== "HEAD") {
         res.writeHead(405, { Allow: "GET, HEAD" });
         res.end();
@@ -368,7 +368,7 @@ export function apply(ctx, config = {}) {
     });
 
     // 关闭当前提醒。
-    route("/ds-session-keeper/ack", async (req, res) => {
+    route("/ds-log-memory/ack", async (req, res) => {
       if (req.method !== "POST") {
         res.writeHead(405, { Allow: "POST" });
         res.end();
@@ -388,7 +388,7 @@ export function apply(ctx, config = {}) {
     });
 
     // 今日不再提醒（北京时间自然日）。
-    route("/ds-session-keeper/mute-today", async (req, res) => {
+    route("/ds-log-memory/mute-today", async (req, res) => {
       if (req.method !== "POST") {
         res.writeHead(405, { Allow: "POST" });
         res.end();
@@ -405,7 +405,7 @@ export function apply(ctx, config = {}) {
     });
 
     // 立即备份。
-    route("/ds-session-keeper/backup", async (req, res) => {
+    route("/ds-log-memory/backup", async (req, res) => {
       if (req.method !== "POST") {
         res.writeHead(405, { Allow: "POST" });
         res.end();
@@ -425,7 +425,7 @@ export function apply(ctx, config = {}) {
     });
 
     // 调试：手动触发一次提醒（仅 debug 模式）。
-    route("/ds-session-keeper/test-remind", async (req, res) => {
+    route("/ds-log-memory/test-remind", async (req, res) => {
       if (req.method !== "POST") {
         res.writeHead(405, { Allow: "POST" });
         res.end();

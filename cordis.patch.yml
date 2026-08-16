@@ -1,19 +1,19 @@
-# dsh-session-keeper 补丁：向 profile 插入 session-keeper 行。
+# dsh-log-memory 补丁：向 profile 插入 log-memory 行。
 #
 # Host half (src/index.js):
-#   - 每 intervalMinutes 生成一次待展示提醒，浏览器经 GET /ds-session-keeper/state
+#   - 每 intervalMinutes 生成一次待展示提醒，浏览器经 GET /ds-log-memory/state
 #     轮询取走弹窗；「今日不再提醒」按北京时间日期生效；
-#   - POST /ds-session-keeper/backup 一键把 ~/.dsh/sessions 下所有
+#   - POST /ds-log-memory/backup 一键把 ~/.dsh/sessions 下所有
 #     session.jsonl / session.jsonl.zstd 增量复制（按大小+mtime 跳过未变化文件）
-#     到 backupDir/<时间戳>/，索引持久化在 profile 目录 session-keeper.json；
+#     到 backupDir/<时间戳>/，索引持久化在 profile 目录 log-memory.json；
 #   - 路由只接受同源 POST；备份仅在本机文件系统内复制，不联网。
 # Browser half (client/client.js):
 #   - 弹窗：标题「该保存会话日志啦」，显示上次备份时间与目标文件夹，
 #     按钮「立即备份到文件夹」/「知道了」，可勾选「今日不再提醒」；
 #     已授权时同时发一条系统级 Notification。
 - insert:
-    - id: session-keeper
-      name: 'dsh-session-keeper'
+    - id: log-memory
+      name: 'dsh-log-memory'
       config:
         # 提醒间隔（分钟），默认 30。
         intervalMinutes: 30

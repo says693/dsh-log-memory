@@ -1,5 +1,5 @@
 {
-  "name": "dsh-session-keeper",
+  "name": "dsh-log-memory",
   "version": "1.0.0",
   "description": "Periodic popup reminder to save DSH session logs into a backup folder, with one-click incremental copy. / 定时弹窗提醒把 DSH 会话日志保存到备份文件夹，支持一键增量复制。",
   "type": "module",

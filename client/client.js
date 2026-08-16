@@ -1,7 +1,7 @@
 /**
- * dsh-session-keeper — browser half（零依赖原生 DOM 客户端模块）。
+ * dsh-log-memory — browser half（零依赖原生 DOM 客户端模块）。
  *
- * - 每 15 秒轮询 GET /ds-session-keeper/state；出现新提醒（nonce 未见过）时弹窗：
+ * - 每 15 秒轮询 GET /ds-log-memory/state；出现新提醒（nonce 未见过）时弹窗：
  *   「🐋 该保存会话日志啦」+ 上次备份信息；
  *   「立即备份到文件夹」→ POST /backup，成功后展示结果（复制/跳过文件数、体积、路径）；
  *   「知道了」→ POST /ack 关闭；勾选「今日不再提醒」后改走 POST /mute-today；
@@ -9,40 +9,40 @@
  * - 弹窗风格沿用 DSW 主题变量，退化为深色默认值。
  */
 window.__ModuleLoader__.load({
-  id: "dsh-session-keeper",
+  id: "dsh-log-memory",
   factory: () => {
     const module = { exports: {} };
     const exports = module.exports;
     Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
 
     //#region styles
-    const CSS_ID = "dsh-session-keeper/styles.css";
+    const CSS_ID = "dsh-log-memory/styles.css";
     if (typeof document !== "undefined" && document.querySelector('style[data-plugin-css="' + CSS_ID + '"]') === null) {
       const tag = document.createElement("style");
-      tag.dataset.plugin = "dsh-session-keeper";
+      tag.dataset.plugin = "dsh-log-memory";
       tag.dataset.pluginCss = CSS_ID;
       tag.textContent = [
-        ".dssk_backdrop{position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.45);font-family:var(--dsw-alias-font-family,system-ui,sans-serif)}",
-        ".dssk_modal{width:min(440px,calc(100vw - 32px));max-height:calc(100vh - 64px);overflow:auto;background:var(--dsw-alias-bg-primary,#202127);color:var(--dsw-alias-label-primary,#e8e8ea);border:1px solid var(--dsw-alias-border-primary,rgba(255,255,255,.12));border-radius:14px;box-shadow:0 16px 48px rgba(0,0,0,.5);padding:18px 20px;box-sizing:border-box}",
-        ".dssk_head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}",
-        ".dssk_title{font-size:15px;font-weight:600;display:flex;align-items:center;gap:8px}",
-        ".dssk_close{background:none;border:none;color:var(--dsw-alias-label-tertiary,#9a9aa2);font-size:18px;cursor:pointer;padding:2px 6px;border-radius:6px;line-height:1}",
-        ".dssk_close:hover{background:rgba(255,255,255,.08);color:var(--dsw-alias-label-primary,#e8e8ea)}",
-        ".dssk_sub{font-size:12.5px;color:var(--dsw-alias-label-secondary,#b6b6bd);margin-bottom:12px;line-height:1.7}",
-        ".dssk_info{background:rgba(255,255,255,.05);border:1px solid var(--dsw-alias-border-primary,rgba(255,255,255,.1));border-radius:8px;padding:8px 10px;font-size:12px;color:var(--dsw-alias-label-secondary,#b6b6bd);margin-bottom:12px;line-height:1.7;word-break:break-all}",
-        ".dssk_info b{color:var(--dsw-alias-label-primary,#e8e8ea);font-weight:600}",
-        ".dssk_actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}",
-        ".dssk_btn{flex:1;min-width:120px;padding:8px 14px;border-radius:9px;border:1px solid var(--dsw-alias-border-primary,rgba(255,255,255,.14));background:rgba(255,255,255,.06);color:var(--dsw-alias-label-primary,#e8e8ea);font-size:13px;cursor:pointer;font-family:inherit}",
-        ".dssk_btn:hover{background:rgba(255,255,255,.12)}",
-        ".dssk_btn_primary{background:var(--dsw-alias-accent-primary,#4c8dff);border-color:transparent;color:#fff}",
-        ".dssk_btn_primary:hover{background:var(--dsw-alias-accent-hover,#3d7bef)}",
-        ".dssk_btn[disabled]{opacity:.5;cursor:not-allowed}",
-        ".dssk_check{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--dsw-alias-label-secondary,#b6b6bd);cursor:pointer;margin-top:12px;user-select:none}",
-        ".dssk_check input{accent-color:var(--dsw-alias-accent-primary,#4c8dff)}",
-        ".dssk_result{font-size:13px;line-height:1.8;margin-bottom:10px}",
-        ".dssk_ok{color:var(--dsw-alias-state-success-primary,#5ec98f)}",
-        ".dssk_err{color:var(--dsw-alias-state-danger-primary,#e5484d)}",
-        ".dssk_path{display:block;margin-top:6px;font-size:11.5px;color:var(--dsw-alias-label-tertiary,#9a9aa2);word-break:break-all}"
+        ".dslm_backdrop{position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.45);font-family:var(--dsw-alias-font-family,system-ui,sans-serif)}",
+        ".dslm_modal{width:min(440px,calc(100vw - 32px));max-height:calc(100vh - 64px);overflow:auto;background:var(--dsw-alias-bg-primary,#202127);color:var(--dsw-alias-label-primary,#e8e8ea);border:1px solid var(--dsw-alias-border-primary,rgba(255,255,255,.12));border-radius:14px;box-shadow:0 16px 48px rgba(0,0,0,.5);padding:18px 20px;box-sizing:border-box}",
+        ".dslm_head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}",
+        ".dslm_title{font-size:15px;font-weight:600;display:flex;align-items:center;gap:8px}",
+        ".dslm_close{background:none;border:none;color:var(--dsw-alias-label-tertiary,#9a9aa2);font-size:18px;cursor:pointer;padding:2px 6px;border-radius:6px;line-height:1}",
+        ".dslm_close:hover{background:rgba(255,255,255,.08);color:var(--dsw-alias-label-primary,#e8e8ea)}",
+        ".dslm_sub{font-size:12.5px;color:var(--dsw-alias-label-secondary,#b6b6bd);margin-bottom:12px;line-height:1.7}",
+        ".dslm_info{background:rgba(255,255,255,.05);border:1px solid var(--dsw-alias-border-primary,rgba(255,255,255,.1));border-radius:8px;padding:8px 10px;font-size:12px;color:var(--dsw-alias-label-secondary,#b6b6bd);margin-bottom:12px;line-height:1.7;word-break:break-all}",
+        ".dslm_info b{color:var(--dsw-alias-label-primary,#e8e8ea);font-weight:600}",
+        ".dslm_actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}",
+        ".dslm_btn{flex:1;min-width:120px;padding:8px 14px;border-radius:9px;border:1px solid var(--dsw-alias-border-primary,rgba(255,255,255,.14));background:rgba(255,255,255,.06);color:var(--dsw-alias-label-primary,#e8e8ea);font-size:13px;cursor:pointer;font-family:inherit}",
+        ".dslm_btn:hover{background:rgba(255,255,255,.12)}",
+        ".dslm_btn_primary{background:var(--dsw-alias-accent-primary,#4c8dff);border-color:transparent;color:#fff}",
+        ".dslm_btn_primary:hover{background:var(--dsw-alias-accent-hover,#3d7bef)}",
+        ".dslm_btn[disabled]{opacity:.5;cursor:not-allowed}",
+        ".dslm_check{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--dsw-alias-label-secondary,#b6b6bd);cursor:pointer;margin-top:12px;user-select:none}",
+        ".dslm_check input{accent-color:var(--dsw-alias-accent-primary,#4c8dff)}",
+        ".dslm_result{font-size:13px;line-height:1.8;margin-bottom:10px}",
+        ".dslm_ok{color:var(--dsw-alias-state-success-primary,#5ec98f)}",
+        ".dslm_err{color:var(--dsw-alias-state-danger-primary,#e5484d)}",
+        ".dslm_path{display:block;margin-top:6px;font-size:11.5px;color:var(--dsw-alias-label-tertiary,#9a9aa2);word-break:break-all}"
       ].join("\n");
       document.head.appendChild(tag);
     }
@@ -75,7 +75,7 @@ window.__ModuleLoader__.load({
 
     async function fetchState() {
       try {
-        const res = await fetch("/ds-session-keeper/state", { cache: "no-store" });
+        const res = await fetch("/ds-log-memory/state", { cache: "no-store" });
         if (!res.ok) return null;
         return await res.json();
       } catch {
@@ -92,7 +92,7 @@ window.__ModuleLoader__.load({
     function closeModal(state, muteChecked) {
       hideModal();
       // 关闭即上报：普通关闭 ack；勾选「今日不再提醒」走 mute-today。
-      const path = muteChecked ? "/ds-session-keeper/mute-today" : "/ds-session-keeper/ack";
+      const path = muteChecked ? "/ds-log-memory/mute-today" : "/ds-log-memory/ack";
       void post(path, muteChecked ? {} : { nonce: state !== null && state.reminder !== null ? state.reminder.nonce : undefined }).catch(() => {});
     }
 
@@ -109,23 +109,23 @@ window.__ModuleLoader__.load({
     function showBackupResult(container, backup, bytesLabel) {
       container.innerHTML = "";
       const result = document.createElement("div");
-      result.className = "dssk_result";
+      result.className = "dslm_result";
       const line = document.createElement("div");
-      line.className = "dssk_ok";
+      line.className = "dslm_ok";
       line.textContent =
         backup.copied > 0
           ? `✅ 已复制 ${backup.copied} 个文件（增量跳过 ${backup.skipped} 个），共 ${bytesLabel}`
           : `✅ 所有会话日志都已是最新（共 ${backup.totalFiles} 个文件，无变化）`;
       result.appendChild(line);
       const path = document.createElement("span");
-      path.className = "dssk_path";
+      path.className = "dslm_path";
       path.textContent = `备份位置：${backup.dest}`;
       result.appendChild(path);
       container.appendChild(result);
       const actions = document.createElement("div");
-      actions.className = "dssk_actions";
+      actions.className = "dslm_actions";
       const okBtn = document.createElement("button");
-      okBtn.className = "dssk_btn dssk_btn_primary";
+      okBtn.className = "dslm_btn dslm_btn_primary";
       okBtn.textContent = "好的";
       okBtn.addEventListener("click", () => hideModal());
       actions.appendChild(okBtn);
@@ -135,20 +135,20 @@ window.__ModuleLoader__.load({
     function showBackupError(container, message, retryFn) {
       container.innerHTML = "";
       const result = document.createElement("div");
-      result.className = "dssk_result";
+      result.className = "dslm_result";
       const line = document.createElement("div");
-      line.className = "dssk_err";
+      line.className = "dslm_err";
       line.textContent = `❌ 备份失败：${message}`;
       result.appendChild(line);
       container.appendChild(result);
       const actions = document.createElement("div");
-      actions.className = "dssk_actions";
+      actions.className = "dslm_actions";
       const retryBtn = document.createElement("button");
-      retryBtn.className = "dssk_btn dssk_btn_primary";
+      retryBtn.className = "dslm_btn dslm_btn_primary";
       retryBtn.textContent = "重试";
       retryBtn.addEventListener("click", retryFn);
       const closeBtn = document.createElement("button");
-      closeBtn.className = "dssk_btn";
+      closeBtn.className = "dslm_btn";
       closeBtn.textContent = "关闭";
       closeBtn.addEventListener("click", () => hideModal());
       actions.appendChild(retryBtn);
@@ -160,29 +160,29 @@ window.__ModuleLoader__.load({
       hideModal();
       const reminder = state.reminder;
       const root = document.createElement("div");
-      root.className = "dssk_backdrop";
+      root.className = "dslm_backdrop";
 
       const modal = document.createElement("div");
-      modal.className = "dssk_modal";
+      modal.className = "dslm_modal";
 
       const head = document.createElement("div");
-      head.className = "dssk_head";
+      head.className = "dslm_head";
       const title = document.createElement("div");
-      title.className = "dssk_title";
+      title.className = "dslm_title";
       title.textContent = `🐋 ${reminder.test === true ? "（测试）" : ""}该保存会话日志啦`;
       const close = document.createElement("button");
-      close.className = "dssk_close";
+      close.className = "dslm_close";
       close.textContent = "×";
       close.setAttribute("aria-label", "关闭");
       head.appendChild(title);
       head.appendChild(close);
 
       const sub = document.createElement("div");
-      sub.className = "dssk_sub";
+      sub.className = "dslm_sub";
       sub.textContent = `每 ${reminder.intervalMinutes} 分钟提醒一次：把会话日志妥善存进备份文件夹，鱼的记忆只有七秒，日志可不能只有七秒。`;
 
       const info = document.createElement("div");
-      info.className = "dssk_info";
+      info.className = "dslm_info";
       if (state.lastBackup !== null && state.lastBackup !== undefined) {
         info.innerHTML =
           `上次备份：<b>${esc(fmtTime(state.lastBackup.atMs))}</b>（复制 ${esc(String(state.lastBackup.copied))} 个，共 ${esc(state.lastBackupBytesLabel ?? "")}）<br>` +
@@ -193,17 +193,17 @@ window.__ModuleLoader__.load({
 
       const body = document.createElement("div"); // 备份结果替换区
       const actions = document.createElement("div");
-      actions.className = "dssk_actions";
+      actions.className = "dslm_actions";
 
       const runBackup = () => {
         for (const btn of actions.querySelectorAll("button")) btn.disabled = true;
-        void post("/ds-session-keeper/backup", {})
+        void post("/ds-log-memory/backup", {})
           .then((res) => {
             if (res !== null && typeof res === "object" && res.ok === true) {
               showBackupResult(body, res.backup, res.bytesLabel);
               actions.remove();
               // 备份已按提醒完成：顺带关闭服务端待展示提醒，避免刷新页面后同一条提醒再次弹出。
-              void post("/ds-session-keeper/ack", { nonce: reminder.nonce }).catch(() => {});
+              void post("/ds-log-memory/ack", { nonce: reminder.nonce }).catch(() => {});
               notifyOS("会话日志已备份", `已复制 ${res.backup.copied} 个文件（${res.bytesLabel}）`);
             } else {
               showBackupError(body, res !== null && typeof res === "object" && typeof res.error === "string" ? res.error : "未知错误", () => {
@@ -221,18 +221,18 @@ window.__ModuleLoader__.load({
       };
 
       const backupBtn = document.createElement("button");
-      backupBtn.className = "dssk_btn dssk_btn_primary";
+      backupBtn.className = "dslm_btn dslm_btn_primary";
       backupBtn.textContent = "立即备份到文件夹";
       backupBtn.disabled = state.backupDisabled === true;
       backupBtn.addEventListener("click", runBackup);
       const ackBtn = document.createElement("button");
-      ackBtn.className = "dssk_btn";
+      ackBtn.className = "dslm_btn";
       ackBtn.textContent = "知道了";
       actions.appendChild(backupBtn);
       actions.appendChild(ackBtn);
 
       const check = document.createElement("label");
-      check.className = "dssk_check";
+      check.className = "dslm_check";
       const checkInput = document.createElement("input");
       checkInput.type = "checkbox";
       const checkText = document.createElement("span");
@@ -285,7 +285,7 @@ window.__ModuleLoader__.load({
           if (pollTimer !== null) clearInterval(pollTimer);
           hideModal();
         };
-      }, "dsh-session-keeper: poll");
+      }, "dsh-log-memory: poll");
     }
 
     exports.apply = apply;
