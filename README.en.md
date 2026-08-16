@@ -33,7 +33,6 @@ dsh plugin --profile web add github:says693/dsh-log-memory
 
 Restart DSH (Deepseek Harness EAC) afterwards. **The first time you open the Web UI, the wizard panel pops up.**
 
-> Users of the community [plugin-registry](https://github.com/dsh-external/plugin-registry) can also install from "Settings → Plugins".
 > Run `dsh --profile web --dump-config` to confirm the plugin made it into the final config. To hack on the source, clone the repo and run `dsh plugin --profile web add .` inside it.
 
 ### Option 2: Manual copy

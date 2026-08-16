@@ -33,7 +33,6 @@ dsh plugin --profile web add github:says693/dsh-log-memory
 
 安装后重启 DSH（Deepseek Harness EAC）。**首次打开 Web 即弹出引导面板**。
 
-> 使用社区 [plugin-registry](https://github.com/dsh-external/plugin-registry) 的用户也可以在「设置 → 插件」里搜索安装。
 > 可运行 `dsh --profile web --dump-config` 确认插件已进入最终配置；需要改源码时，克隆仓库后在仓库目录运行 `dsh plugin --profile web add .`。
 
 ### 方式二：手动安装
