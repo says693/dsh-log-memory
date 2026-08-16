@@ -322,6 +322,7 @@ export function apply(ctx, config = {}) {
     mutedDate: null, // "YYYY-MM-DD"（北京时间）
     fileIndex: {}, // 鱼话版增量索引："rel:size:mtimeMs" -> true
     textIndex: {}, // 人话版增量索引："rel:size:mtimeMs" -> true
+    lastDestByMode: { fish: null, human: null }, // 每种格式最近一次真正写盘的目录
     settings: {
       intervalMinutes: null, // null = 未设置，回落到 yml config / 30
       backupDir: null, // null = 未设置，回落到 yml config / 用户主目录默认
@@ -354,6 +355,10 @@ export function apply(ctx, config = {}) {
               parsed.textIndex !== null && typeof parsed.textIndex === "object" && !Array.isArray(parsed.textIndex)
                 ? parsed.textIndex
                 : {},
+            lastDestByMode: {
+              fish: typeof parsed.lastDestByMode?.fish === "string" ? parsed.lastDestByMode.fish : null,
+              human: typeof parsed.lastDestByMode?.human === "string" ? parsed.lastDestByMode.human : null,
+            },
             settings: {
               intervalMinutes:
                 Number.isFinite(iv) && iv >= INTERVAL_MIN && iv <= INTERVAL_MAX ? Math.floor(iv) : null,
@@ -380,6 +385,7 @@ export function apply(ctx, config = {}) {
             mutedDate: state.mutedDate,
             fileIndex: state.fileIndex,
             textIndex: state.textIndex,
+            lastDestByMode: state.lastDestByMode,
             settings: state.settings,
           },
           null,
@@ -511,9 +517,34 @@ export function apply(ctx, config = {}) {
     for (const key of Object.keys(state.textIndex)) {
       if (!seen.has(key)) delete state.textIndex[key];
     }
+    if (copied > 0) {
+      state.lastDestByMode[mode] = destRoot;
+    }
+    // 无变化时不新开目录：报告该格式最近一次真正写盘且仍存在的位置，避免指向幽灵目录；
+    // 旧状态没有 lastDestByMode 记录时，兜底取备份根下最近一个真实存在的时间戳批次。
+    const knownDest = state.lastDestByMode[mode];
+    let reportDest;
+    if (copied > 0) {
+      reportDest = destRoot;
+    } else if (typeof knownDest === "string" && existsSync(knownDest)) {
+      reportDest = knownDest;
+    } else {
+      let latest = null;
+      try {
+        latest =
+          readdirSync(backupDir, { withFileTypes: true })
+            .filter((e) => e.isDirectory() && /^\d{4}-\d{2}-\d{2}_\d{4}$/.test(e.name))
+            .map((e) => join(backupDir, e.name))
+            .sort()
+            .at(-1) ?? null;
+      } catch {
+        /* 备份根不存在则保持 destRoot */
+      }
+      reportDest = latest !== null && existsSync(latest) ? latest : destRoot;
+    }
     state.lastBackup = {
       atMs: Date.now(),
-      dest: destRoot,
+      dest: reportDest,
       copied,
       skipped,
       bytes,

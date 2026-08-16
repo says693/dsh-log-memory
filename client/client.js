@@ -439,7 +439,7 @@ window.__ModuleLoader__.load({
         result.appendChild(line);
         const path = document.createElement("span");
         path.className = "dslm_path";
-        path.textContent = `备份位置：${backup.dest}`;
+        path.textContent = `${backup.copied > 0 ? "备份位置" : "最新备份位置（本次无变化）"}：${backup.dest}`;
         result.appendChild(path);
         const actions = document.createElement("div");
         actions.className = "dslm_actions";
