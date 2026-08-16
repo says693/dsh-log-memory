@@ -196,7 +196,7 @@ window.__ModuleLoader__.load({
       folderLabel.textContent = "备份文件夹";
       const folderHint = document.createElement("span");
       folderHint.className = "dslm_label_hint";
-      folderHint.textContent = "（绝对路径，改动后点保存或立即备份生效）";
+      folderHint.textContent = "（绝对路径，关闭弹窗或点立即备份时自动保存）";
       folderLabel.appendChild(folderHint);
       const folderInput = document.createElement("input");
       folderInput.type = "text";
@@ -453,8 +453,22 @@ window.__ModuleLoader__.load({
       }
 
       backupBtn.addEventListener("click", () => void runBackup());
-      skipBtn.addEventListener("click", () => closeModal(checkInput.checked));
-      close.addEventListener("click", () => closeModal(checkInput.checked));
+      // 关闭前保存未提交的文件夹改动（空值不提交，合法性校验交给服务端）。
+      const closeAndSaveFolder = (muteChecked) => {
+        const dir = folderInput.value.trim();
+        if (dir !== "" && lastState !== null && lastState.settings !== undefined && dir !== lastState.settings.backupDir) {
+          void post("/ds-log-memory/settings", { backupDir: dir })
+            .then((res) => {
+              if (res !== null && typeof res === "object" && res.ok === true) {
+                lastState = { ...lastState, settings: res.settings };
+              }
+            })
+            .catch(() => {});
+        }
+        closeModal(muteChecked);
+      };
+      skipBtn.addEventListener("click", () => closeAndSaveFolder(checkInput.checked));
+      close.addEventListener("click", () => closeAndSaveFolder(checkInput.checked));
       // 注意：不响应「点击遮罩关闭」——全屏遮罩下误触率太高（弹窗会一
       // 直挡着界面直到明确选择 × / 本次跳过 / 好的，避免误关后干等下个周期）。
 
