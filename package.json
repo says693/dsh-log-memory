@@ -1,0 +1,39 @@
+{
+  "name": "dsh-session-keeper",
+  "version": "1.0.0",
+  "description": "Periodic popup reminder to save DSH session logs into a backup folder, with one-click incremental copy. / 定时弹窗提醒把 DSH 会话日志保存到备份文件夹，支持一键增量复制。",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./client/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "client",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime"
+      ],
+      "platform": "web"
+    }
+  },
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "session",
+    "backup",
+    "reminder"
+  ]
+}
