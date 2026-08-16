@@ -1,7 +1,7 @@
 {
   "name": "dsh-log-memory",
-  "version": "1.0.0",
-  "description": "Periodic popup reminder to save DSH session logs into a backup folder, with one-click incremental copy. / 定时弹窗提醒把 DSH 会话日志保存到备份文件夹，支持一键增量复制。",
+  "version": "1.1.0",
+  "description": "Popup-on-open + periodic reminder to save DSH session logs, with in-popup interval (10min-3h) & backup folder settings and one-click incremental copy. / 打开 Web 即弹窗 + 定时提醒保存 DSH 会话日志，弹窗内可设提醒间隔（10分钟-3小时）与备份文件夹，一键增量复制。",
   "type": "module",
   "main": "src/index.js",
   "exports": {

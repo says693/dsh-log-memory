@@ -1,15 +1,17 @@
 /**
  * dsh-log-memory — server half.
  *
- * 每 intervalMinutes 生成一次待展示提醒，浏览器经 GET /ds-log-memory/state
- * 轮询取走弹窗；POST /ds-log-memory/backup 一键把 ~/.dsh/sessions 下的
- * 会话日志（session.jsonl / session.jsonl.zstd）增量复制到
- * backupDir/<时间戳>/。索引持久化在 profile 目录 log-memory.json，
- * 按「相对路径:大小:mtime」跳过未变化的文件，日常增量只有几 KB。
+ * 打开 Web 即弹窗（客户端负责），弹窗内可完成三件事：
+ *   ① 是否立即备份；② 设置提醒间隔（10–180 分钟，自由选择，持久化）；
+ *   ③ 首次安装时选择/确认备份文件夹（绝对路径，持久化）。
+ * 定期提醒仍按当前有效间隔触发；POST /ds-log-memory/backup 一键把
+ * ~/.dsh/sessions 下的会话日志（session.jsonl / .jsonl.zstd）增量复制到
+ * backupDir/<时间戳>/，索引持久化在 profile 目录 log-memory.json。
  *
  * 约定：
- * - 路由只接受同源 POST（与浏览器同源，无跨域面）；
- * - 备份是纯本机文件复制，不联网、不上报；
+ * - 运行时设置（settings.intervalMinutes / settings.backupDir）优先于
+ *   cordis.patch.yml 里的静态 config，存于状态文件，重启不丢；
+ * - 路由只接受同源 POST；备份为纯本机复制，不联网、不上报；
  * - 「今日不再提醒」按北京时间日期判定，跨天自然失效。
  */
 import { randomUUID } from "node:crypto";
@@ -30,6 +32,13 @@ export const name = "log-memory";
 
 /** 会话日志文件名（新格式 .jsonl.zstd，旧格式 .jsonl）。 */
 const ARTIFACT_RE = /^session\.jsonl(\.zstd)?$/;
+
+/** 提醒间隔范围（分钟）：最短 10，最长 180（3 小时）。 */
+const INTERVAL_MIN = 10;
+const INTERVAL_MAX = 180;
+
+/** Windows 绝对路径：盘符、UNC 或以 / 开头。 */
+const ABSOLUTE_RE = /^([A-Za-z]:[\\/]|\\\\|\/)/;
 
 /** 从运行参数推断 profile 名（与市场插件同一套逻辑）。 */
 function argvProfile() {
@@ -110,13 +119,11 @@ export function apply(ctx, config = {}) {
       ? config.profile
       : argvProfile() ?? "web";
 
-  const rawInterval = Number(config.intervalMinutes);
-  const intervalMinutes =
-    Number.isFinite(rawInterval) && rawInterval >= 1 && rawInterval <= 24 * 60
-      ? Math.floor(rawInterval)
+  const cfgIntervalRaw = Number(config.intervalMinutes);
+  const cfgInterval =
+    Number.isFinite(cfgIntervalRaw) && cfgIntervalRaw >= INTERVAL_MIN && cfgIntervalRaw <= INTERVAL_MAX
+      ? Math.floor(cfgIntervalRaw)
       : 30;
-  const intervalMs = intervalMinutes * 60 * 1000;
-
   const debug = config.debug === true;
 
   const home =
@@ -127,14 +134,11 @@ export function apply(ctx, config = {}) {
     typeof config.sessionsDir === "string" && config.sessionsDir !== ""
       ? config.sessionsDir
       : join(home, "sessions");
-  const backupDir =
-    typeof config.backupDir === "string" && config.backupDir !== ""
-      ? config.backupDir
-      : join(homedir(), "dsh-session-backups");
-
-  // 备份目录不能落在会话根目录内（避免下一轮把备份又当源文件扫进来）。
-  const backupInsideSessions =
-    backupDir === sessionsDir || backupDir.startsWith(sessionsDir + sep) || backupDir.startsWith(sessionsDir + "/");
+  const cfgBackupDir =
+    typeof config.backupDir === "string" && config.backupDir.trim() !== ""
+      ? config.backupDir.trim()
+      : null;
+  const defaultBackupDir = join(homedir(), "dsh-log-memory-backups");
 
   const statePath = join(home, "profiles", profile, "log-memory.json");
 
@@ -151,9 +155,14 @@ export function apply(ctx, config = {}) {
   // ---- 状态（内存 + 持久化） ----
   let state = {
     reminder: null, // { nonce, atMs, intervalMinutes, test? }
-    lastBackup: null, // { atMs, dest, copied, skipped, bytes }
+    lastBackup: null, // { atMs, dest, copied, skipped, bytes, totalFiles }
     mutedDate: null, // "YYYY-MM-DD"（北京时间）
     fileIndex: {}, // "rel:size:mtimeMs" -> true
+    settings: {
+      intervalMinutes: null, // null = 未设置，回落到 yml config / 30
+      backupDir: null, // null = 未设置，回落到 yml config / 用户主目录默认
+      onboarded: false, // 是否已在弹窗里完成过一次设置（首次引导标志）
+    },
   };
 
   const loadState = () => {
@@ -161,6 +170,12 @@ export function apply(ctx, config = {}) {
       if (existsSync(statePath)) {
         const parsed = JSON.parse(readFileSync(statePath, "utf8"));
         if (parsed !== null && typeof parsed === "object") {
+          const s =
+            parsed.settings !== null && typeof parsed.settings === "object" && !Array.isArray(parsed.settings)
+              ? parsed.settings
+              : {};
+          const iv = Number(s.intervalMinutes);
+          const bd = typeof s.backupDir === "string" && s.backupDir.trim() !== "" ? s.backupDir.trim() : null;
           state = {
             reminder: null,
             lastBackup:
@@ -170,6 +185,12 @@ export function apply(ctx, config = {}) {
               parsed.fileIndex !== null && typeof parsed.fileIndex === "object" && !Array.isArray(parsed.fileIndex)
                 ? parsed.fileIndex
                 : {},
+            settings: {
+              intervalMinutes:
+                Number.isFinite(iv) && iv >= INTERVAL_MIN && iv <= INTERVAL_MAX ? Math.floor(iv) : null,
+              backupDir: bd,
+              onboarded: s.onboarded === true,
+            },
           };
         }
       }
@@ -183,7 +204,16 @@ export function apply(ctx, config = {}) {
       mkdirSync(dirname(statePath), { recursive: true });
       writeFileSync(
         statePath,
-        JSON.stringify({ lastBackup: state.lastBackup, mutedDate: state.mutedDate, fileIndex: state.fileIndex }, null, 2),
+        JSON.stringify(
+          {
+            lastBackup: state.lastBackup,
+            mutedDate: state.mutedDate,
+            fileIndex: state.fileIndex,
+            settings: state.settings,
+          },
+          null,
+          2,
+        ),
         "utf8",
       );
     } catch (error) {
@@ -191,8 +221,25 @@ export function apply(ctx, config = {}) {
     }
   };
 
-  // ---- 定时提醒 ----
+  // ---- 有效设置（运行时 settings > yml config > 默认） ----
+  const effInterval = () => {
+    const v = state.settings.intervalMinutes;
+    return typeof v === "number" && v >= INTERVAL_MIN && v <= INTERVAL_MAX ? v : cfgInterval;
+  };
+  const effBackupDir = () =>
+    state.settings.backupDir !== null ? state.settings.backupDir : cfgBackupDir !== null ? cfgBackupDir : defaultBackupDir;
+  // 路径统一成正斜杠并去尾斜杠再比较：用户输入 H:/x 与 H:\x 视为同一目录。
+  const normDir = (d) => String(d).replace(/\\/g, "/").replace(/\/+$/, "");
+  const backupDisabledFor = (dir) => {
+    const a = normDir(dir);
+    const b = normDir(sessionsDir);
+    return a === b || a.startsWith(b + "/");
+  };
+
+  // ---- 定时提醒（间隔可在运行时调整，热重排） ----
+  let remindTimer = null;
   let nextRemindAtMs = null;
+  let firstArm = true;
   let fireCount = 0;
 
   const fireReminder = (test = false) => {
@@ -205,40 +252,36 @@ export function apply(ctx, config = {}) {
     state.reminder = {
       nonce: randomUUID(),
       atMs: Date.now(),
-      intervalMinutes,
+      intervalMinutes: effInterval(),
       test: test === true,
     };
     log("info", `reminder #${fireCount}${test ? " (test)" : ""} ready`);
   };
 
+  const armTimer = () => {
+    if (remindTimer !== null) clearTimeout(remindTimer);
+    const delay = firstArm && debug ? 20 * 1000 : effInterval() * 60 * 1000;
+    firstArm = false;
+    nextRemindAtMs = Date.now() + delay;
+    remindTimer = setTimeout(() => {
+      fireReminder();
+      armTimer();
+    }, delay);
+  };
+
   loadState();
   ctx.effect(() => {
-    // debug 模式启动 20 秒后先弹一次，便于验收；常规模式按间隔触发。
-    const firstDelay = debug ? 20 * 1000 : intervalMs;
-    let timer = null;
-    const scheduleNext = () => {
-      timer = setTimeout(() => {
-        fireReminder();
-        nextRemindAtMs = Date.now() + intervalMs;
-        scheduleNext();
-      }, intervalMs);
-    };
-    const first = setTimeout(() => {
-      fireReminder();
-      nextRemindAtMs = Date.now() + intervalMs;
-      scheduleNext();
-    }, firstDelay);
-    nextRemindAtMs = Date.now() + firstDelay;
+    armTimer();
     return () => {
-      clearTimeout(first);
-      if (timer !== null) clearTimeout(timer);
+      if (remindTimer !== null) clearTimeout(remindTimer);
     };
   }, "log-memory: reminder timer");
 
   // ---- 备份 ----
   const doBackup = () => {
-    if (backupInsideSessions) {
-      throw new Error("backupDir 不能位于会话目录内部");
+    const backupDir = effBackupDir();
+    if (backupDisabledFor(backupDir)) {
+      throw new Error("备份文件夹不能位于会话目录内部");
     }
     const files = listArtifacts(sessionsDir);
     const destRoot = join(backupDir, stampDirName());
@@ -339,6 +382,12 @@ export function apply(ctx, config = {}) {
       );
     };
 
+    const serializedSettings = () => ({
+      intervalMinutes: effInterval(),
+      backupDir: effBackupDir(),
+      onboarded: state.settings.onboarded === true,
+    });
+
     route("/ds-log-memory/state", (req, res) => {
       if (req.method !== "GET" && req.method !== "HEAD") {
         res.writeHead(405, { Allow: "GET, HEAD" });
@@ -348,9 +397,11 @@ export function apply(ctx, config = {}) {
       const payload = {
         enabled: true,
         debug,
-        intervalMinutes,
-        backupDir,
-        backupDisabled: backupInsideSessions,
+        firstRun: state.settings.onboarded !== true,
+        intervalMin: INTERVAL_MIN,
+        intervalMax: INTERVAL_MAX,
+        settings: serializedSettings(),
+        backupDisabled: backupDisabledFor(effBackupDir()),
         reminder: state.reminder,
         lastBackup: state.lastBackup,
         lastBackupBytesLabel: state.lastBackup === null ? null : fmtBytes(state.lastBackup.bytes),
@@ -365,6 +416,52 @@ export function apply(ctx, config = {}) {
         "Content-Length": Buffer.byteLength(body),
       });
       res.end(req.method === "HEAD" ? undefined : body);
+    });
+
+    // 运行时设置：提醒间隔（10–180 分钟）与备份文件夹（绝对路径）。
+    route("/ds-log-memory/settings", async (req, res) => {
+      if (req.method !== "POST") {
+        res.writeHead(405, { Allow: "POST" });
+        res.end();
+        return;
+      }
+      if (!sameOrigin(req)) {
+        sendJson(res, 403, { ok: false, error: "untrusted origin" });
+        return;
+      }
+      const body = await readJson(req);
+      if (body === null || typeof body !== "object") {
+        sendJson(res, 400, { ok: false, error: "bad json" });
+        return;
+      }
+      let intervalChanged = false;
+      if (body.intervalMinutes !== undefined) {
+        const v = Math.round(Number(body.intervalMinutes));
+        if (Number.isFinite(v)) {
+          state.settings.intervalMinutes = Math.min(INTERVAL_MAX, Math.max(INTERVAL_MIN, v));
+          intervalChanged = true;
+        }
+      }
+      if (typeof body.backupDir === "string") {
+        const dir = body.backupDir.trim();
+        if (dir === "") {
+          sendJson(res, 400, { ok: false, error: "备份文件夹不能为空" });
+          return;
+        }
+        if (!ABSOLUTE_RE.test(dir)) {
+          sendJson(res, 400, { ok: false, error: "备份文件夹需为绝对路径（例如 H:/备份 或 D:\\备份）" });
+          return;
+        }
+        if (backupDisabledFor(dir)) {
+          sendJson(res, 400, { ok: false, error: "备份文件夹不能位于会话目录内部" });
+          return;
+        }
+        state.settings.backupDir = dir;
+      }
+      state.settings.onboarded = true;
+      if (intervalChanged) armTimer();
+      persist();
+      sendJson(res, 200, { ok: true, settings: serializedSettings(), nextRemindAtMs });
     });
 
     // 关闭当前提醒。
@@ -446,6 +543,6 @@ export function apply(ctx, config = {}) {
 
   log(
     "info",
-    `已启动：每 ${intervalMinutes} 分钟提醒备份会话日志；备份目录 ${backupDir}${backupInsideSessions ? "（配置无效：位于会话目录内）" : ""}`,
+    `已启动：提醒间隔 ${effInterval()} 分钟（弹窗内可调 ${INTERVAL_MIN}–${INTERVAL_MAX}）；备份目录 ${effBackupDir()}${backupDisabledFor(effBackupDir()) ? "（配置无效：位于会话目录内）" : ""}`,
   );
 }

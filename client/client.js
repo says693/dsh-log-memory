@@ -1,12 +1,16 @@
 /**
  * dsh-log-memory — browser half（零依赖原生 DOM 客户端模块）。
  *
- * - 每 15 秒轮询 GET /ds-log-memory/state；出现新提醒（nonce 未见过）时弹窗：
- *   「🐋 该保存会话日志啦」+ 上次备份信息；
- *   「立即备份到文件夹」→ POST /backup，成功后展示结果（复制/跳过文件数、体积、路径）；
- *   「知道了」→ POST /ack 关闭；勾选「今日不再提醒」后改走 POST /mute-today；
- * - 已授权通知权限时同时弹一条系统级 Notification（不主动请求权限，避免骚扰）；
- * - 弹窗风格沿用 DSW 主题变量，退化为深色默认值。
+ * - 打开 Web 即弹窗（未「今日不再提醒」时）：一个面板三件事——
+ *   ① 询问是否备份：「立即备份到文件夹」/「本次跳过」；
+ *   ② 提醒时间设定：预设档（10 分钟/30 分钟/1 小时/2 小时/3 小时）+
+ *      滑杆自由微调（10–180 分钟），改动即保存（POST /settings）并热重排定时器；
+ *   ③ 备份文件夹设定：文本框预填当前路径，首次安装（firstRun）高亮引导，
+ *      修改后在备份/保存时一并提交；
+ * - 定期提醒弹窗与开屏弹窗同款面板；备份成功后展示结果并顺带 ack；
+ * - 「今日不再提醒」按北京时间自然日生效（开屏弹窗同样尊重）；
+ * - 已授权通知权限时，定期提醒会同步弹一条系统级 Notification
+ *   （开屏弹窗不弹系统通知，避免每次刷新都骚扰）。
  */
 window.__ModuleLoader__.load({
   id: "dsh-log-memory",
@@ -23,25 +27,40 @@ window.__ModuleLoader__.load({
       tag.dataset.pluginCss = CSS_ID;
       tag.textContent = [
         ".dslm_backdrop{position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.45);font-family:var(--dsw-alias-font-family,system-ui,sans-serif)}",
-        ".dslm_modal{width:min(440px,calc(100vw - 32px));max-height:calc(100vh - 64px);overflow:auto;background:var(--dsw-alias-bg-primary,#202127);color:var(--dsw-alias-label-primary,#e8e8ea);border:1px solid var(--dsw-alias-border-primary,rgba(255,255,255,.12));border-radius:14px;box-shadow:0 16px 48px rgba(0,0,0,.5);padding:18px 20px;box-sizing:border-box}",
-        ".dslm_head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}",
+        ".dslm_modal{width:min(460px,calc(100vw - 32px));max-height:calc(100vh - 64px);overflow:auto;background:var(--dsw-alias-bg-primary,#202127);color:var(--dsw-alias-label-primary,#e8e8ea);border:1px solid var(--dsw-alias-border-primary,rgba(255,255,255,.12));border-radius:14px;box-shadow:0 16px 48px rgba(0,0,0,.5);padding:18px 20px;box-sizing:border-box}",
+        ".dslm_head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px}",
         ".dslm_title{font-size:15px;font-weight:600;display:flex;align-items:center;gap:8px}",
         ".dslm_close{background:none;border:none;color:var(--dsw-alias-label-tertiary,#9a9aa2);font-size:18px;cursor:pointer;padding:2px 6px;border-radius:6px;line-height:1}",
         ".dslm_close:hover{background:rgba(255,255,255,.08);color:var(--dsw-alias-label-primary,#e8e8ea)}",
-        ".dslm_sub{font-size:12.5px;color:var(--dsw-alias-label-secondary,#b6b6bd);margin-bottom:12px;line-height:1.7}",
+        ".dslm_sub{font-size:12px;color:var(--dsw-alias-label-secondary,#b6b6bd);margin-bottom:12px;line-height:1.7}",
+        ".dslm_section{margin-bottom:14px}",
+        ".dslm_label{font-size:12.5px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:6px}",
+        ".dslm_label_hint{font-size:11px;font-weight:400;color:var(--dsw-alias-label-tertiary,#9a9aa2)}",
+        ".dslm_first{font-size:12px;color:var(--dsw-alias-state-warning-primary,#f2b24c);background:rgba(242,178,76,.12);border:1px solid rgba(242,178,76,.3);border-radius:8px;padding:6px 10px;margin-bottom:10px}",
+        ".dslm_input{width:100%;box-sizing:border-box;padding:7px 10px;border-radius:8px;border:1px solid var(--dsw-alias-border-primary,rgba(255,255,255,.14));background:rgba(0,0,0,.25);color:var(--dsw-alias-label-primary,#e8e8ea);font-size:12.5px;font-family:inherit}",
+        ".dslm_input:focus{outline:none;border-color:var(--dsw-alias-accent-primary,#4c8dff)}",
         ".dslm_info{background:rgba(255,255,255,.05);border:1px solid var(--dsw-alias-border-primary,rgba(255,255,255,.1));border-radius:8px;padding:8px 10px;font-size:12px;color:var(--dsw-alias-label-secondary,#b6b6bd);margin-bottom:12px;line-height:1.7;word-break:break-all}",
         ".dslm_info b{color:var(--dsw-alias-label-primary,#e8e8ea);font-weight:600}",
         ".dslm_actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}",
-        ".dslm_btn{flex:1;min-width:120px;padding:8px 14px;border-radius:9px;border:1px solid var(--dsw-alias-border-primary,rgba(255,255,255,.14));background:rgba(255,255,255,.06);color:var(--dsw-alias-label-primary,#e8e8ea);font-size:13px;cursor:pointer;font-family:inherit}",
+        ".dslm_btn{flex:1;min-width:110px;padding:8px 14px;border-radius:9px;border:1px solid var(--dsw-alias-border-primary,rgba(255,255,255,.14));background:rgba(255,255,255,.06);color:var(--dsw-alias-label-primary,#e8e8ea);font-size:13px;cursor:pointer;font-family:inherit}",
         ".dslm_btn:hover{background:rgba(255,255,255,.12)}",
         ".dslm_btn_primary{background:var(--dsw-alias-accent-primary,#4c8dff);border-color:transparent;color:#fff}",
         ".dslm_btn_primary:hover{background:var(--dsw-alias-accent-hover,#3d7bef)}",
         ".dslm_btn[disabled]{opacity:.5;cursor:not-allowed}",
+        ".dslm_chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}",
+        ".dslm_chip{padding:4px 10px;border-radius:999px;border:1px solid var(--dsw-alias-border-primary,rgba(255,255,255,.16));background:rgba(255,255,255,.05);color:var(--dsw-alias-label-secondary,#b6b6bd);font-size:11.5px;cursor:pointer;font-family:inherit}",
+        ".dslm_chip:hover{background:rgba(255,255,255,.1)}",
+        ".dslm_chip_on{background:var(--dsw-alias-accent-primary,#4c8dff);border-color:transparent;color:#fff;font-weight:600}",
+        ".dslm_slider_row{display:flex;align-items:center;gap:10px}",
+        ".dslm_slider{flex:1;accent-color:var(--dsw-alias-accent-primary,#4c8dff)}",
+        ".dslm_interval_label{font-size:12px;color:var(--dsw-alias-label-secondary,#b6b6bd);min-width:64px;text-align:right}",
+        ".dslm_saved{font-size:11px;color:var(--dsw-alias-state-success-primary,#5ec98f);margin-top:4px;min-height:14px}",
+        ".dslm_err{font-size:12px;color:var(--dsw-alias-state-danger-primary,#e5484d);background:rgba(229,72,77,.1);border:1px solid rgba(229,72,77,.3);border-radius:8px;padding:6px 10px;margin-top:8px;display:none;word-break:break-all}",
         ".dslm_check{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--dsw-alias-label-secondary,#b6b6bd);cursor:pointer;margin-top:12px;user-select:none}",
         ".dslm_check input{accent-color:var(--dsw-alias-accent-primary,#4c8dff)}",
         ".dslm_result{font-size:13px;line-height:1.8;margin-bottom:10px}",
         ".dslm_ok{color:var(--dsw-alias-state-success-primary,#5ec98f)}",
-        ".dslm_err{color:var(--dsw-alias-state-danger-primary,#e5484d)}",
+        ".dslm_err_line{color:var(--dsw-alias-state-danger-primary,#e5484d)}",
         ".dslm_path{display:block;margin-top:6px;font-size:11.5px;color:var(--dsw-alias-label-tertiary,#9a9aa2);word-break:break-all}"
       ].join("\n");
       document.head.appendChild(tag);
@@ -50,6 +69,14 @@ window.__ModuleLoader__.load({
 
     //#region state
     const POLL_MS = 15000;
+    const PRESETS = [
+      { v: 10, label: "10 分钟" },
+      { v: 30, label: "30 分钟" },
+      { v: 60, label: "1 小时" },
+      { v: 120, label: "2 小时" },
+      { v: 180, label: "3 小时" },
+    ];
+    let lastState = null; // 最近一次 /state 响应
     let shownNonce = null; // 已弹过提醒的 nonce
     let modalEl = null; // 当前弹窗根节点（null = 未显示）
     let pollTimer = null;
@@ -58,11 +85,18 @@ window.__ModuleLoader__.load({
     const esc = (s) =>
       String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
+    const fmtClock = (ms) => {
+      if (!Number.isFinite(ms)) return "—";
+      const d = new Date(ms);
+      const p = (n) => String(n).padStart(2, "0");
+      return `${p(d.getHours())}:${p(d.getMinutes())}`;
+    };
     const fmtTime = (ms) => {
       const d = new Date(Number(ms));
       const p = (n) => String(n).padStart(2, "0");
       return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
     };
+    const intervalText = (v) => (v >= 60 ? `${(v / 60).toFixed(v % 60 === 0 ? 0 : 1)} 小时` : `${v} 分钟`);
 
     async function post(path, body) {
       const res = await fetch(path, {
@@ -83,93 +117,51 @@ window.__ModuleLoader__.load({
       }
     }
 
-    //#region modal
-    function hideModal() {
-      if (modalEl !== null && modalEl.isConnected) modalEl.remove();
-      modalEl = null;
-    }
-
-    function closeModal(state, muteChecked) {
-      hideModal();
-      // 关闭即上报：普通关闭 ack；勾选「今日不再提醒」走 mute-today。
-      const path = muteChecked ? "/ds-log-memory/mute-today" : "/ds-log-memory/ack";
-      void post(path, muteChecked ? {} : { nonce: state !== null && state.reminder !== null ? state.reminder.nonce : undefined }).catch(() => {});
-    }
-
     function notifyOS(title, body) {
       try {
         if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-          new Notification(title, { body, silent: false });
+          new Notification(title, { body });
         }
       } catch {
         /* 通知失败无所谓，页面内弹窗才是主通道 */
       }
     }
 
-    function showBackupResult(container, backup, bytesLabel) {
-      container.innerHTML = "";
-      const result = document.createElement("div");
-      result.className = "dslm_result";
-      const line = document.createElement("div");
-      line.className = "dslm_ok";
-      line.textContent =
-        backup.copied > 0
-          ? `✅ 已复制 ${backup.copied} 个文件（增量跳过 ${backup.skipped} 个），共 ${bytesLabel}`
-          : `✅ 所有会话日志都已是最新（共 ${backup.totalFiles} 个文件，无变化）`;
-      result.appendChild(line);
-      const path = document.createElement("span");
-      path.className = "dslm_path";
-      path.textContent = `备份位置：${backup.dest}`;
-      result.appendChild(path);
-      container.appendChild(result);
-      const actions = document.createElement("div");
-      actions.className = "dslm_actions";
-      const okBtn = document.createElement("button");
-      okBtn.className = "dslm_btn dslm_btn_primary";
-      okBtn.textContent = "好的";
-      okBtn.addEventListener("click", () => hideModal());
-      actions.appendChild(okBtn);
-      container.appendChild(actions);
+    function hideModal() {
+      if (modalEl !== null && modalEl.isConnected) modalEl.remove();
+      modalEl = null;
     }
 
-    function showBackupError(container, message, retryFn) {
-      container.innerHTML = "";
-      const result = document.createElement("div");
-      result.className = "dslm_result";
-      const line = document.createElement("div");
-      line.className = "dslm_err";
-      line.textContent = `❌ 备份失败：${message}`;
-      result.appendChild(line);
-      container.appendChild(result);
-      const actions = document.createElement("div");
-      actions.className = "dslm_actions";
-      const retryBtn = document.createElement("button");
-      retryBtn.className = "dslm_btn dslm_btn_primary";
-      retryBtn.textContent = "重试";
-      retryBtn.addEventListener("click", retryFn);
-      const closeBtn = document.createElement("button");
-      closeBtn.className = "dslm_btn";
-      closeBtn.textContent = "关闭";
-      closeBtn.addEventListener("click", () => hideModal());
-      actions.appendChild(retryBtn);
-      actions.appendChild(closeBtn);
-      container.appendChild(actions);
-    }
-
-    function showModal(state) {
+    function closeModal(muteChecked) {
       hideModal();
-      const reminder = state.reminder;
+      // 关闭即上报：普通关闭 ack；勾选「今日不再提醒」走 mute-today。
+      const nonce = lastState !== null && lastState.reminder !== null && typeof lastState.reminder.nonce === "string"
+        ? lastState.reminder.nonce
+        : undefined;
+      const path = muteChecked ? "/ds-log-memory/mute-today" : "/ds-log-memory/ack";
+      void post(path, muteChecked ? {} : { nonce }).catch(() => {});
+    }
+
+    //#region modal
+    /**
+     * 统一面板：reason = "open"（打开 Web 即弹）或 "reminder"（定期提醒）。
+     */
+    function showModal(state, reason) {
+      hideModal();
+      lastState = state;
+      const s = state.settings;
       const root = document.createElement("div");
       root.className = "dslm_backdrop";
 
       const modal = document.createElement("div");
       modal.className = "dslm_modal";
 
+      // -- 头部 --
       const head = document.createElement("div");
       head.className = "dslm_head";
       const title = document.createElement("div");
       title.className = "dslm_title";
-      title.textContent = `🐋 ${reminder.test === true ? "（测试）" : ""}该保存会话日志啦`;
+      title.textContent = reason === "reminder" ? "🐋 该保存会话日志啦" : "🐋 会话日志守护";
       const close = document.createElement("button");
       close.className = "dslm_close";
       close.textContent = "×";
@@ -179,92 +171,258 @@ window.__ModuleLoader__.load({
 
       const sub = document.createElement("div");
       sub.className = "dslm_sub";
-      sub.textContent = `每 ${reminder.intervalMinutes} 分钟提醒一次：把会话日志妥善存进备份文件夹，鱼的记忆只有七秒，日志可不能只有七秒。`;
+      sub.textContent = `每 ${intervalText(s.intervalMinutes)}提醒一次 · 下次提醒 ${fmtClock(state.nextRemindAtMs)} · 鱼的记忆只有七秒，日志可不能只有七秒。`;
 
+      // -- 首次引导提示 --
+      let firstTip = null;
+      if (state.firstRun === true) {
+        firstTip = document.createElement("div");
+        firstTip.className = "dslm_first";
+        firstTip.textContent = "初次使用：请在下方设置备份文件夹，离开前记得保存。";
+      }
+
+      // -- 备份文件夹 --
+      const folderSection = document.createElement("div");
+      folderSection.className = "dslm_section";
+      const folderLabel = document.createElement("div");
+      folderLabel.className = "dslm_label";
+      folderLabel.textContent = "备份文件夹";
+      const folderHint = document.createElement("span");
+      folderHint.className = "dslm_label_hint";
+      folderHint.textContent = "（绝对路径，改动后点保存或立即备份生效）";
+      folderLabel.appendChild(folderHint);
+      const folderInput = document.createElement("input");
+      folderInput.type = "text";
+      folderInput.className = "dslm_input";
+      folderInput.value = s.backupDir;
+      folderInput.spellcheck = false;
+      folderSection.appendChild(folderLabel);
+      folderSection.appendChild(folderInput);
+
+      // -- 上次备份信息 --
       const info = document.createElement("div");
       info.className = "dslm_info";
       if (state.lastBackup !== null && state.lastBackup !== undefined) {
         info.innerHTML =
-          `上次备份：<b>${esc(fmtTime(state.lastBackup.atMs))}</b>（复制 ${esc(String(state.lastBackup.copied))} 个，共 ${esc(state.lastBackupBytesLabel ?? "")}）<br>` +
-          `目标文件夹：<b>${esc(state.backupDir)}</b>`;
+          `上次备份：<b>${esc(fmtTime(state.lastBackup.atMs))}</b>（复制 ${esc(String(state.lastBackup.copied))} 个，共 ${esc(state.lastBackupBytesLabel ?? "")}）`;
       } else {
-        info.innerHTML = `还没有备份过。目标文件夹：<b>${esc(state.backupDir)}</b>`;
+        info.textContent = "还没有备份过。";
       }
 
-      const body = document.createElement("div"); // 备份结果替换区
-      const actions = document.createElement("div");
-      actions.className = "dslm_actions";
-
-      const runBackup = () => {
-        for (const btn of actions.querySelectorAll("button")) btn.disabled = true;
-        void post("/ds-log-memory/backup", {})
-          .then((res) => {
-            if (res !== null && typeof res === "object" && res.ok === true) {
-              showBackupResult(body, res.backup, res.bytesLabel);
-              actions.remove();
-              // 备份已按提醒完成：顺带关闭服务端待展示提醒，避免刷新页面后同一条提醒再次弹出。
-              void post("/ds-log-memory/ack", { nonce: reminder.nonce }).catch(() => {});
-              notifyOS("会话日志已备份", `已复制 ${res.backup.copied} 个文件（${res.bytesLabel}）`);
-            } else {
-              showBackupError(body, res !== null && typeof res === "object" && typeof res.error === "string" ? res.error : "未知错误", () => {
-                actions.remove();
-                showModal(state); // 重新渲染初始弹窗再试
-              });
-            }
-          })
-          .catch((error) => {
-            showBackupError(body, error instanceof Error ? error.message : String(error), () => {
-              actions.remove();
-              showModal(state);
-            });
-          });
-      };
-
+      // -- 是否备份 --
+      const backupSection = document.createElement("div");
+      backupSection.className = "dslm_section";
+      const backupLabel = document.createElement("div");
+      backupLabel.className = "dslm_label";
+      backupLabel.textContent = "现在要备份吗？";
+      const backupActions = document.createElement("div");
+      backupActions.className = "dslm_actions";
       const backupBtn = document.createElement("button");
       backupBtn.className = "dslm_btn dslm_btn_primary";
       backupBtn.textContent = "立即备份到文件夹";
       backupBtn.disabled = state.backupDisabled === true;
-      backupBtn.addEventListener("click", runBackup);
-      const ackBtn = document.createElement("button");
-      ackBtn.className = "dslm_btn";
-      ackBtn.textContent = "知道了";
-      actions.appendChild(backupBtn);
-      actions.appendChild(ackBtn);
+      const skipBtn = document.createElement("button");
+      skipBtn.className = "dslm_btn";
+      skipBtn.textContent = "本次跳过";
+      backupActions.appendChild(backupBtn);
+      backupActions.appendChild(skipBtn);
+      backupSection.appendChild(backupLabel);
+      backupSection.appendChild(backupActions);
 
+      // -- 提醒间隔设定 --
+      const intervalSection = document.createElement("div");
+      intervalSection.className = "dslm_section";
+      const intervalLabel = document.createElement("div");
+      intervalLabel.className = "dslm_label";
+      intervalLabel.textContent = "提醒时间设定";
+      const rangeHint = document.createElement("span");
+      rangeHint.className = "dslm_label_hint";
+      rangeHint.textContent = "（最短 10 分钟，最长 3 小时）";
+      intervalLabel.appendChild(rangeHint);
+
+      const chips = document.createElement("div");
+      chips.className = "dslm_chips";
+      const chipBtns = [];
+      for (const p of PRESETS) {
+        const c = document.createElement("button");
+        c.className = "dslm_chip" + (s.intervalMinutes === p.v ? " dslm_chip_on" : "");
+        c.textContent = p.label;
+        c.addEventListener("click", () => {
+          slider.value = String(p.v);
+          void saveInterval(p.v);
+        });
+        chipBtns.push({ btn: c, v: p.v });
+        chips.appendChild(c);
+      }
+
+      const sliderRow = document.createElement("div");
+      sliderRow.className = "dslm_slider_row";
+      const slider = document.createElement("input");
+      slider.type = "range";
+      slider.className = "dslm_slider";
+      slider.min = String(state.intervalMin ?? 10);
+      slider.max = String(state.intervalMax ?? 180);
+      slider.step = "1";
+      slider.value = String(s.intervalMinutes);
+      const sliderLabel = document.createElement("div");
+      sliderLabel.className = "dslm_interval_label";
+      sliderLabel.textContent = intervalText(s.intervalMinutes);
+      slider.addEventListener("input", () => {
+        sliderLabel.textContent = intervalText(Number(slider.value));
+      });
+      slider.addEventListener("change", () => {
+        void saveInterval(Number(slider.value));
+      });
+      sliderRow.appendChild(slider);
+      sliderRow.appendChild(sliderLabel);
+
+      const savedTip = document.createElement("div");
+      savedTip.className = "dslm_saved";
+
+      intervalSection.appendChild(intervalLabel);
+      intervalSection.appendChild(chips);
+      intervalSection.appendChild(sliderRow);
+      intervalSection.appendChild(savedTip);
+
+      // -- 错误行 --
+      const errBox = document.createElement("div");
+      errBox.className = "dslm_err";
+      const showError = (msg) => {
+        errBox.style.display = "block";
+        errBox.textContent = msg;
+      };
+      const clearError = () => {
+        errBox.style.display = "none";
+      };
+
+      // -- 今日不再提醒 --
       const check = document.createElement("label");
       check.className = "dslm_check";
       const checkInput = document.createElement("input");
       checkInput.type = "checkbox";
       const checkText = document.createElement("span");
-      checkText.textContent = "今日不再提醒";
+      checkText.textContent = "今日不再提醒（含开屏弹窗）";
       check.appendChild(checkInput);
       check.appendChild(checkText);
 
+      // -- 保存间隔设置 --
+      async function saveInterval(v) {
+        clearError();
+        for (const { btn, v: pv } of chipBtns) btn.classList.toggle("dslm_chip_on", pv === v);
+        sliderLabel.textContent = intervalText(v);
+        try {
+          const res = await post("/ds-log-memory/settings", { intervalMinutes: v });
+          if (res !== null && typeof res === "object" && res.ok === true) {
+            lastState = { ...lastState, settings: res.settings, nextRemindAtMs: res.nextRemindAtMs };
+            sub.textContent = `每 ${intervalText(res.settings.intervalMinutes)}提醒一次 · 下次提醒 ${fmtClock(res.nextRemindAtMs)} · 鱼的记忆只有七秒，日志可不能只有七秒。`;
+            savedTip.textContent = `已保存：每 ${intervalText(res.settings.intervalMinutes)}提醒一次（下次 ${fmtClock(res.nextRemindAtMs)}）`;
+          } else {
+            showError(res !== null && typeof res === "object" && typeof res.error === "string" ? res.error : "保存失败");
+          }
+        } catch (e) {
+          showError(e instanceof Error ? e.message : String(e));
+        }
+      }
+
+      // -- 备份执行 --
+      const runBackup = async () => {
+        clearError();
+        backupBtn.disabled = true;
+        skipBtn.disabled = true;
+        try {
+          // 文件夹若有改动，先保存再备份
+          const dir = folderInput.value.trim();
+          if (dir !== s.backupDir) {
+            const sres = await post("/ds-log-memory/settings", { backupDir: dir });
+            if (sres === null || typeof sres !== "object" || sres.ok !== true) {
+              backupBtn.disabled = false;
+              skipBtn.disabled = false;
+              showError(sres !== null && typeof sres === "object" && typeof sres.error === "string" ? sres.error : "备份文件夹保存失败");
+              return;
+            }
+            lastState = { ...lastState, settings: sres.settings };
+          }
+          const res = await post("/ds-log-memory/backup", {});
+          if (res !== null && typeof res === "object" && res.ok === true) {
+            showBackupResult(res.backup, res.bytesLabel);
+            // 备份已按提醒完成：顺带关闭服务端待展示提醒，避免刷新后重复弹出。
+            const nonce = state.reminder !== null && typeof state.reminder.nonce === "string" ? state.reminder.nonce : undefined;
+            void post("/ds-log-memory/ack", { nonce }).catch(() => {});
+            notifyOS("会话日志已备份", `已复制 ${res.backup.copied} 个文件（${res.bytesLabel}）`);
+          } else {
+            backupBtn.disabled = false;
+            skipBtn.disabled = false;
+            showError(res !== null && typeof res === "object" && typeof res.error === "string" ? res.error : "备份失败：未知错误");
+          }
+        } catch (e) {
+          backupBtn.disabled = false;
+          skipBtn.disabled = false;
+          showError(e instanceof Error ? e.message : String(e));
+        }
+      };
+
+      function showBackupResult(backup, bytesLabel) {
+        modal.innerHTML = "";
+        const result = document.createElement("div");
+        result.className = "dslm_result";
+        const line = document.createElement("div");
+        line.className = "dslm_ok";
+        line.textContent =
+          backup.copied > 0
+            ? `✅ 已复制 ${backup.copied} 个文件（增量跳过 ${backup.skipped} 个），共 ${bytesLabel}`
+            : `✅ 所有会话日志都已是最新（共 ${backup.totalFiles} 个文件，无变化）`;
+        result.appendChild(line);
+        const path = document.createElement("span");
+        path.className = "dslm_path";
+        path.textContent = `备份位置：${backup.dest}`;
+        result.appendChild(path);
+        const actions = document.createElement("div");
+        actions.className = "dslm_actions";
+        const okBtn = document.createElement("button");
+        okBtn.className = "dslm_btn dslm_btn_primary";
+        okBtn.textContent = "好的";
+        okBtn.addEventListener("click", () => hideModal());
+        actions.appendChild(okBtn);
+        modal.appendChild(result);
+        modal.appendChild(actions);
+      }
+
+      backupBtn.addEventListener("click", () => void runBackup());
+      skipBtn.addEventListener("click", () => closeModal(checkInput.checked));
+      close.addEventListener("click", () => closeModal(checkInput.checked));
+      root.addEventListener("click", (e) => {
+        if (e.target === root) closeModal(checkInput.checked);
+      });
+
       modal.appendChild(head);
       modal.appendChild(sub);
+      if (firstTip !== null) modal.appendChild(firstTip);
+      modal.appendChild(folderSection);
       modal.appendChild(info);
-      modal.appendChild(body);
-      modal.appendChild(actions);
+      modal.appendChild(backupSection);
+      modal.appendChild(intervalSection);
+      modal.appendChild(errBox);
       modal.appendChild(check);
       root.appendChild(modal);
-      root.addEventListener("click", (e) => {
-        if (e.target === root) closeModal(state, checkInput.checked);
-      });
-      close.addEventListener("click", () => closeModal(state, checkInput.checked));
-      ackBtn.addEventListener("click", () => closeModal(state, checkInput.checked));
       document.body.appendChild(root);
       modalEl = root;
 
-      notifyOS("该保存会话日志啦", "点击 DSH 窗口中的「立即备份到文件夹」完成保存");
+      if (reason === "reminder") {
+        notifyOS("该保存会话日志啦", "点击 DSH 窗口中的「立即备份到文件夹」完成保存");
+      }
     }
     //#endregion
 
     function maybeShowReminder(state) {
-      if (state === null || state.reminder === null || typeof state.reminder !== "object") return;
+      if (state === null) return;
+      lastState = state;
+      if (state.reminder === null || typeof state.reminder !== "object") return;
       if (typeof state.reminder.nonce !== "string") return;
       if (state.reminder.nonce === shownNonce) return;
       shownNonce = state.reminder.nonce;
-      showModal(state);
+      // 弹窗已打开时吸收该提醒（用户正在面板里操作），不重复弹。
+      if (modalEl !== null && modalEl.isConnected) return;
+      showModal(state, "reminder");
     }
 
     //#region plugin
@@ -277,6 +435,14 @@ window.__ModuleLoader__.load({
           maybeShowReminder(state);
         });
       };
+      // 打开 Web 即弹窗：首次拉取状态后立即显示（尊重「今日不再提醒」）。
+      void fetchState().then((state) => {
+        if (disposed || state === null) return;
+        lastState = state;
+        if (state.mutedToday !== true && (modalEl === null || !modalEl.isConnected)) {
+          showModal(state, "open");
+        }
+      });
       ctx.effect(() => {
         pollTimer = setInterval(refresh, POLL_MS);
         refresh();
