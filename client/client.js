@@ -39,6 +39,13 @@ window.__ModuleLoader__.load({
         ".dslm_first{font-size:12px;color:var(--dsw-alias-state-warning-primary,#f2b24c);background:rgba(242,178,76,.12);border:1px solid rgba(242,178,76,.3);border-radius:8px;padding:6px 10px;margin-bottom:10px}",
         ".dslm_input{width:100%;box-sizing:border-box;padding:7px 10px;border-radius:8px;border:1px solid var(--dsw-alias-border-primary,rgba(255,255,255,.14));background:rgba(0,0,0,.25);color:var(--dsw-alias-label-primary,#e8e8ea);font-size:12.5px;font-family:inherit}",
         ".dslm_input:focus{outline:none;border-color:var(--dsw-alias-accent-primary,#4c8dff)}",
+        ".dslm_mode_row{display:flex;gap:10px}",
+        ".dslm_mode{flex:1;padding:9px 10px;border-radius:10px;border:1px solid var(--dsw-alias-border-primary,rgba(255,255,255,.16));background:rgba(255,255,255,.05);color:var(--dsw-alias-label-primary,#e8e8ea);font-size:13px;cursor:pointer;font-family:inherit;text-align:center;line-height:1.5}",
+        ".dslm_mode:hover{background:rgba(255,255,255,.1)}",
+        ".dslm_mode_sub{display:block;font-size:10.5px;color:var(--dsw-alias-label-tertiary,#9a9aa2);margin-top:2px}",
+        ".dslm_mode_on{background:var(--dsw-alias-accent-primary,#4c8dff);border-color:transparent;color:#fff;box-shadow:0 2px 8px rgba(76,141,255,.4)}",
+        ".dslm_mode_on:hover{background:var(--dsw-alias-accent-hover,#3d7bef)}",
+        ".dslm_mode_on .dslm_mode_sub{color:rgba(255,255,255,.85)}",
         ".dslm_info{background:rgba(255,255,255,.05);border:1px solid var(--dsw-alias-border-primary,rgba(255,255,255,.1));border-radius:8px;padding:8px 10px;font-size:12px;color:var(--dsw-alias-label-secondary,#b6b6bd);margin-bottom:12px;line-height:1.7;word-break:break-all}",
         ".dslm_info b{color:var(--dsw-alias-label-primary,#e8e8ea);font-weight:600}",
         ".dslm_actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}",
@@ -199,6 +206,43 @@ window.__ModuleLoader__.load({
       folderSection.appendChild(folderLabel);
       folderSection.appendChild(folderInput);
 
+      // -- 备份格式：鱼话版 / 人话版（互斥双钮，按下/抬起，可自由切换） --
+      const modeSection = document.createElement("div");
+      modeSection.className = "dslm_section";
+      const modeLabel = document.createElement("div");
+      modeLabel.className = "dslm_label";
+      modeLabel.textContent = "备份格式";
+      const modeHint = document.createElement("span");
+      modeHint.className = "dslm_label_hint";
+      modeHint.textContent = "（二选一，点选自由切换）";
+      modeLabel.appendChild(modeHint);
+      const modeRow = document.createElement("div");
+      modeRow.className = "dslm_mode_row";
+      const modeButtons = [];
+      const makeModeBtn = (mode, main, sub) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "dslm_mode" + (s.backupMode === mode ? " dslm_mode_on" : "");
+        b.setAttribute("aria-pressed", String(s.backupMode === mode));
+        const m = document.createElement("span");
+        m.textContent = main;
+        const sb = document.createElement("span");
+        sb.className = "dslm_mode_sub";
+        sb.textContent = sub;
+        b.appendChild(m);
+        b.appendChild(sb);
+        b.addEventListener("click", () => {
+          if (lastState !== null && lastState.settings !== undefined && lastState.settings.backupMode === mode) return;
+          void saveMode(mode);
+        });
+        modeButtons.push({ btn: b, mode });
+        return b;
+      };
+      modeRow.appendChild(makeModeBtn("fish", "🐟 鱼话版", "原始压缩 · 可恢复"));
+      modeRow.appendChild(makeModeBtn("human", "🧑 人话版", "聊天记录 · 直接可读"));
+      modeSection.appendChild(modeLabel);
+      modeSection.appendChild(modeRow);
+
       // -- 上次备份信息 --
       const info = document.createElement("div");
       info.className = "dslm_info";
@@ -324,6 +368,27 @@ window.__ModuleLoader__.load({
         }
       }
 
+      // -- 备份格式切换 --
+      async function saveMode(mode) {
+        clearError();
+        try {
+          const res = await post("/ds-log-memory/settings", { backupMode: mode });
+          if (res !== null && typeof res === "object" && res.ok === true) {
+            lastState = { ...lastState, settings: res.settings };
+            for (const { btn, mode: m } of modeButtons) {
+              const on = res.settings.backupMode === m;
+              btn.classList.toggle("dslm_mode_on", on);
+              btn.setAttribute("aria-pressed", String(on));
+            }
+            savedTip.textContent = `备份格式已切换：${res.settings.backupMode === "human" ? "人话版（可读 .txt）" : "鱼话版（原始 .zstd）"}，下次备份生效`;
+          } else {
+            showError(res !== null && typeof res === "object" && typeof res.error === "string" ? res.error : "切换失败");
+          }
+        } catch (e) {
+          showError(e instanceof Error ? e.message : String(e));
+        }
+      }
+
       // -- 备份执行 --
       const runBackup = async () => {
         clearError();
@@ -397,6 +462,7 @@ window.__ModuleLoader__.load({
       modal.appendChild(sub);
       if (firstTip !== null) modal.appendChild(firstTip);
       modal.appendChild(folderSection);
+      modal.appendChild(modeSection);
       modal.appendChild(info);
       modal.appendChild(backupSection);
       modal.appendChild(intervalSection);

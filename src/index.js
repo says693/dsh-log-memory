@@ -1,17 +1,21 @@
 /**
  * dsh-log-memory — server half.
  *
- * 打开 Web 即弹窗（客户端负责），弹窗内可完成三件事：
+ * 打开 Web 即弹窗（客户端负责），弹窗内可完成四件事：
  *   ① 是否立即备份；② 设置提醒间隔（10–180 分钟，自由选择，持久化）；
- *   ③ 首次安装时选择/确认备份文件夹（绝对路径，持久化）。
- * 定期提醒仍按当前有效间隔触发；POST /ds-log-memory/backup 一键把
- * ~/.dsh/sessions 下的会话日志（session.jsonl / .jsonl.zstd）增量复制到
- * backupDir/<时间戳>/，索引持久化在 profile 目录 log-memory.json。
+ *   ③ 首次安装时选择/确认备份文件夹（绝对路径，持久化）；
+ *   ④ 备份格式二选一（可随时切换，持久化）：
+ *      - 鱼话版（fish）：原样增量复制 session.jsonl(.zstd)，机器格式，可用于恢复；
+ *      - 人话版（human）：把每个会话渲染成可直接阅读的 .txt 聊天记录
+ *        （含标题/时间/token 用量档案头、按轮次排版的用户消息、
+ *         助手思考与正文、工具调用与结果）。
+ * 两种格式各自维护独立增量索引（fileIndex / textIndex），切换后首次
+ * 备份会为当前格式生成全量，之后恢复增量。
  *
  * 约定：
- * - 运行时设置（settings.intervalMinutes / settings.backupDir）优先于
- *   cordis.patch.yml 里的静态 config，存于状态文件，重启不丢；
- * - 路由只接受同源 POST；备份为纯本机复制，不联网、不上报；
+ * - 运行时设置（intervalMinutes / backupDir / backupMode）优先于
+ *   cordis.patch.yml 静态 config，存于状态文件，重启不丢；
+ * - 路由只接受同源 POST；备份是纯本机文件操作，不联网、不上报；
  * - 「今日不再提醒」按北京时间日期判定，跨天自然失效。
  */
 import { randomUUID } from "node:crypto";
@@ -26,6 +30,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
+import zlib from "node:zlib";
 
 /** 稳定插件名（profile 组合中的行 id）。 */
 export const name = "log-memory";
@@ -113,6 +118,163 @@ const fmtBytes = (n) => {
   return `${(n / 1024 / 1024).toFixed(2)} MB`;
 };
 
+/** zstd 逐帧解压；非 zstd（裸 .jsonl）按 UTF-8 原样返回文本。 */
+function decompressToText(buf) {
+  if (!(buf.length >= 4 && buf[0] === 0x28 && buf[1] === 0xb5 && buf[2] === 0x2f && buf[3] === 0xfd)) {
+    return buf.toString("utf8");
+  }
+  const cands = [];
+  for (let i = 0; i <= buf.length - 4; i++) {
+    if (buf[i] === 0x28 && buf[i + 1] === 0xb5 && buf[i + 2] === 0x2f && buf[i + 3] === 0xfd) cands.push(i);
+  }
+  const parts = [];
+  let pos = 0;
+  let ci = 0;
+  while (ci < cands.length) {
+    const start = cands[ci];
+    if (start < pos) {
+      ci += 1;
+      continue;
+    }
+    let matched = false;
+    for (let cj = ci + 1; cj < cands.length && !matched; cj++) {
+      try {
+        parts.push(zlib.zstdDecompressSync(buf.subarray(start, cands[cj])));
+        pos = cands[cj];
+        ci = cj;
+        matched = true;
+      } catch {
+        /* 尝试下一帧边界 */
+      }
+    }
+    if (!matched) {
+      try {
+        parts.push(zlib.zstdDecompressSync(buf.subarray(start)));
+        pos = buf.length;
+      } catch {
+        /* 尾帧损坏则丢弃 */
+      }
+      ci += 1;
+    }
+  }
+  return Buffer.concat(parts).toString("utf8");
+}
+
+/** 人话版渲染用的小工具。 */
+const pad2 = (n) => String(n).padStart(2, "0");
+const clockOf = (ms) => {
+  const d = new Date(ms);
+  return `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+};
+const squeeze = (s, n = Infinity) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, n);
+
+/**
+ * 把一个会话日志文件渲染成「人话版」文本。
+ * 返回 { text, title, sid }；解析失败时 text 为空串。
+ */
+function renderTranscript(rawBuf) {
+  let events = [];
+  try {
+    events = decompressToText(rawBuf)
+      .split("\n")
+      .filter((l) => l.trim())
+      .map((l) => {
+        try {
+          return JSON.parse(l);
+        } catch {
+          return null;
+        }
+      })
+      .filter((o) => o !== null);
+  } catch {
+    return { text: "", title: "解析失败", sid: "error" };
+  }
+  const meta = events.find((o) => o.type === "session") ?? {};
+  const sid = String(meta.id ?? "session-?").replace("session-", "").slice(0, 8);
+  const titles = events
+    .filter((o) => o.type === "session/title")
+    .map((o) => (o.data !== null && typeof o.data === "object" ? o.data.title : o.data))
+    .filter(Boolean);
+  const firstUser = events.find((o) => o.type === "user/message");
+  let firstUserText = "";
+  if (firstUser !== undefined) {
+    const d = firstUser.data;
+    firstUserText =
+      typeof d === "string"
+        ? d
+        : d?.text ??
+          (Array.isArray(d?.content) ? d.content.filter((b) => b.type === "text").map((b) => b.text).join(" ") : "") ??
+          "";
+  }
+  const title = squeeze(titles.at(-1) ?? "", 24) || squeeze(firstUserText, 24) || "空会话";
+
+  const userMsgs = events.filter((o) => o.type === "user/message");
+  const asstMsgs = events.filter((o) => o.type === "assistant/message");
+  const toolCalls = events.filter((o) => o.type === "tool/call");
+  let tokIn = 0;
+  let tokOut = 0;
+  for (const m of asstMsgs) {
+    const u = m.data !== null && typeof m.data === "object" ? m.data.usage ?? {} : {};
+    tokIn += u.inputTokens ?? u.input_tokens ?? u.input ?? 0;
+    tokOut += u.outputTokens ?? u.output_tokens ?? u.output ?? 0;
+  }
+  const times = events.map((o) => (typeof o.time === "number" ? o.time : 0)).filter(Boolean);
+  const t0 = meta.createdAt ?? times[0] ?? 0;
+  const t1 = times.length > 0 ? Math.max(...times) : t0;
+
+  const out = [];
+  out.push("═".repeat(56));
+  out.push(`会话：${titles.at(-1) ?? title}`);
+  out.push(`ID：${meta.id ?? "？"}`);
+  out.push(`工作目录：${meta.cwd ?? "？"}`);
+  out.push(`时间：${clockOf(t0)} → ${clockOf(t1)}`);
+  out.push(
+    `规模：${userMsgs.length} 条用户消息 · ${asstMsgs.length} 条回复 · ${toolCalls.length} 次工具调用 · ${events.length} 行事件`,
+  );
+  if (tokIn > 0 || tokOut > 0) {
+    out.push(`用量：输入约 ${(tokIn / 10000).toFixed(1)} 万 · 输出约 ${(tokOut / 10000).toFixed(1)} 万 tokens`);
+  }
+  out.push("═".repeat(56));
+  out.push("");
+
+  let turn = 0;
+  for (const o of events) {
+    if (o.type === "turn/start") {
+      turn = o.data?.turn ?? turn + 1;
+      out.push(`───── 第 ${turn} 轮 ─────`);
+    } else if (o.type === "user/message") {
+      const d = o.data;
+      const txt =
+        typeof d === "string"
+          ? d
+          : d?.text ??
+            (Array.isArray(d?.content) ? d.content.filter((b) => b.type === "text").map((b) => b.text).join("\n") : "") ??
+            "";
+      const body = String(txt).trim();
+      if (body.startsWith("<")) continue; // 系统注入的上下文快照
+      out.push(`🧑 用户 [${clockOf(o.time)}]`);
+      out.push(body.replace(/^/gm, "  "));
+      out.push("");
+    } else if (o.type === "assistant/message") {
+      const m = o.data?.message ?? {};
+      const model = o.data?.source?.model ?? "";
+      out.push(`🐋 ${model || "助手"} [${clockOf(o.time)}]`);
+      for (const blk of Array.isArray(m.content) ? m.content : []) {
+        if (blk.type === "reasoning" && blk.text) out.push(`  💭 ${squeeze(blk.text, 200)}`);
+        if (blk.type === "text" && blk.text) out.push(String(blk.text).replace(/^/gm, "  "));
+      }
+      out.push("");
+    } else if (o.type === "tool/call") {
+      const args = JSON.stringify(o.data?.args ?? o.data?.input ?? "");
+      out.push(`  🔧 调用 ${o.data?.name ?? o.data?.tool ?? "?"}: ${squeeze(args, 160)}`);
+    } else if (o.type === "tool/result") {
+      const r = typeof o.data === "string" ? o.data : JSON.stringify(o.data ?? "");
+      out.push(`  📤 结果: ${squeeze(r, 200)}`);
+    }
+  }
+  return { text: out.join("\r\n"), title, sid };
+}
+
 export function apply(ctx, config = {}) {
   const profile =
     typeof config.profile === "string" && config.profile !== ""
@@ -138,6 +300,7 @@ export function apply(ctx, config = {}) {
     typeof config.backupDir === "string" && config.backupDir.trim() !== ""
       ? config.backupDir.trim()
       : null;
+  const cfgBackupMode = config.backupMode === "human" ? "human" : "fish";
   const defaultBackupDir = join(homedir(), "dsh-log-memory-backups");
 
   const statePath = join(home, "profiles", profile, "log-memory.json");
@@ -155,12 +318,14 @@ export function apply(ctx, config = {}) {
   // ---- 状态（内存 + 持久化） ----
   let state = {
     reminder: null, // { nonce, atMs, intervalMinutes, test? }
-    lastBackup: null, // { atMs, dest, copied, skipped, bytes, totalFiles }
+    lastBackup: null, // { atMs, dest, copied, skipped, bytes, totalFiles, mode }
     mutedDate: null, // "YYYY-MM-DD"（北京时间）
-    fileIndex: {}, // "rel:size:mtimeMs" -> true
+    fileIndex: {}, // 鱼话版增量索引："rel:size:mtimeMs" -> true
+    textIndex: {}, // 人话版增量索引："rel:size:mtimeMs" -> true
     settings: {
       intervalMinutes: null, // null = 未设置，回落到 yml config / 30
       backupDir: null, // null = 未设置，回落到 yml config / 用户主目录默认
+      backupMode: null, // null = 未设置，回落到 yml config / "fish"
       onboarded: false, // 是否已在弹窗里完成过一次设置（首次引导标志）
     },
   };
@@ -185,10 +350,15 @@ export function apply(ctx, config = {}) {
               parsed.fileIndex !== null && typeof parsed.fileIndex === "object" && !Array.isArray(parsed.fileIndex)
                 ? parsed.fileIndex
                 : {},
+            textIndex:
+              parsed.textIndex !== null && typeof parsed.textIndex === "object" && !Array.isArray(parsed.textIndex)
+                ? parsed.textIndex
+                : {},
             settings: {
               intervalMinutes:
                 Number.isFinite(iv) && iv >= INTERVAL_MIN && iv <= INTERVAL_MAX ? Math.floor(iv) : null,
               backupDir: bd,
+              backupMode: s.backupMode === "human" || s.backupMode === "fish" ? s.backupMode : null,
               onboarded: s.onboarded === true,
             },
           };
@@ -209,6 +379,7 @@ export function apply(ctx, config = {}) {
             lastBackup: state.lastBackup,
             mutedDate: state.mutedDate,
             fileIndex: state.fileIndex,
+            textIndex: state.textIndex,
             settings: state.settings,
           },
           null,
@@ -228,6 +399,10 @@ export function apply(ctx, config = {}) {
   };
   const effBackupDir = () =>
     state.settings.backupDir !== null ? state.settings.backupDir : cfgBackupDir !== null ? cfgBackupDir : defaultBackupDir;
+  const effBackupMode = () =>
+    state.settings.backupMode === "human" || state.settings.backupMode === "fish"
+      ? state.settings.backupMode
+      : cfgBackupMode;
   // 路径统一成正斜杠并去尾斜杠再比较：用户输入 H:/x 与 H:\x 视为同一目录。
   const normDir = (d) => String(d).replace(/\\/g, "/").replace(/\/+$/, "");
   const backupDisabledFor = (dir) => {
@@ -283,29 +458,58 @@ export function apply(ctx, config = {}) {
     if (backupDisabledFor(backupDir)) {
       throw new Error("备份文件夹不能位于会话目录内部");
     }
-    const files = listArtifacts(sessionsDir);
+    const mode = effBackupMode();
+    const files = listArtifacts(sessionsDir).slice().sort((a, b) => a.mtimeMs - b.mtimeMs);
     const destRoot = join(backupDir, stampDirName());
+    const index = mode === "human" ? state.textIndex : state.fileIndex;
     let copied = 0;
     let skipped = 0;
     let bytes = 0;
     const seen = new Set();
-    for (const f of files) {
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
       const key = `${f.rel}:${f.size}:${Math.floor(f.mtimeMs)}`;
       seen.add(key);
-      if (state.fileIndex[key] === true) {
+      if (index[key] === true) {
         skipped += 1;
         continue;
       }
-      const dest = join(destRoot, f.rel.replace(/\//g, sep));
-      mkdirSync(dirname(dest), { recursive: true });
-      copyFileSync(f.abs, dest);
+      if (mode === "fish") {
+        const dest = join(destRoot, f.rel.replace(/\//g, sep));
+        mkdirSync(dirname(dest), { recursive: true });
+        copyFileSync(f.abs, dest);
+        bytes += f.size;
+      } else {
+        // 人话版：渲染为可直接阅读的 .txt；序号取会话在全量中的位置，跨批次保持稳定。
+        let rendered;
+        try {
+          rendered = renderTranscript(readFileSync(f.abs));
+        } catch (error) {
+          log("warn", `render failed, fallback raw copy: ${f.rel}: ${error instanceof Error ? error.message : String(error)}`);
+          const dest = join(destRoot, f.rel.replace(/\//g, sep));
+          mkdirSync(dirname(dest), { recursive: true });
+          copyFileSync(f.abs, dest);
+          bytes += f.size;
+          copied += 1;
+          index[key] = true;
+          continue;
+        }
+        const safeTitle = rendered.title.replace(/[\\/:*?"<>|]/g, "_");
+        const dest = join(destRoot, `${pad2(i + 1)}_${safeTitle}_${rendered.sid}.txt`);
+        mkdirSync(destRoot, { recursive: true });
+        const body = "\uFEFF" + rendered.text + "\r\n";
+        writeFileSync(dest, body, "utf8");
+        bytes += Buffer.byteLength(body);
+      }
       copied += 1;
-      bytes += f.size;
-      state.fileIndex[key] = true;
+      index[key] = true;
     }
-    // 清理已消失文件的索引项，防止无限增长。
+    // 清理已消失文件的索引项（两种格式一并清理），防止无限增长。
     for (const key of Object.keys(state.fileIndex)) {
       if (!seen.has(key)) delete state.fileIndex[key];
+    }
+    for (const key of Object.keys(state.textIndex)) {
+      if (!seen.has(key)) delete state.textIndex[key];
     }
     state.lastBackup = {
       atMs: Date.now(),
@@ -314,9 +518,10 @@ export function apply(ctx, config = {}) {
       skipped,
       bytes,
       totalFiles: files.length,
+      mode,
     };
     persist();
-    log("info", `backup done: copied=${copied} skipped=${skipped} bytes=${bytes} -> ${destRoot}`);
+    log("info", `backup(${mode}) done: copied=${copied} skipped=${skipped} bytes=${bytes} -> ${destRoot}`);
     return state.lastBackup;
   };
 
@@ -385,6 +590,7 @@ export function apply(ctx, config = {}) {
     const serializedSettings = () => ({
       intervalMinutes: effInterval(),
       backupDir: effBackupDir(),
+      backupMode: effBackupMode(),
       onboarded: state.settings.onboarded === true,
     });
 
@@ -418,7 +624,7 @@ export function apply(ctx, config = {}) {
       res.end(req.method === "HEAD" ? undefined : body);
     });
 
-    // 运行时设置：提醒间隔（10–180 分钟）与备份文件夹（绝对路径）。
+    // 运行时设置：提醒间隔（10–180 分钟）、备份文件夹（绝对路径）、备份格式（fish/human）。
     route("/ds-log-memory/settings", async (req, res) => {
       if (req.method !== "POST") {
         res.writeHead(405, { Allow: "POST" });
@@ -457,6 +663,11 @@ export function apply(ctx, config = {}) {
           return;
         }
         state.settings.backupDir = dir;
+      }
+      if (body.backupMode !== undefined) {
+        if (body.backupMode === "human" || body.backupMode === "fish") {
+          state.settings.backupMode = body.backupMode;
+        }
       }
       state.settings.onboarded = true;
       if (intervalChanged) armTimer();
@@ -501,7 +712,7 @@ export function apply(ctx, config = {}) {
       sendJson(res, 200, { ok: true, mutedDate: state.mutedDate });
     });
 
-    // 立即备份。
+    // 立即备份（按当前格式：鱼话版 / 人话版）。
     route("/ds-log-memory/backup", async (req, res) => {
       if (req.method !== "POST") {
         res.writeHead(405, { Allow: "POST" });
@@ -543,6 +754,6 @@ export function apply(ctx, config = {}) {
 
   log(
     "info",
-    `已启动：提醒间隔 ${effInterval()} 分钟（弹窗内可调 ${INTERVAL_MIN}–${INTERVAL_MAX}）；备份目录 ${effBackupDir()}${backupDisabledFor(effBackupDir()) ? "（配置无效：位于会话目录内）" : ""}`,
+    `已启动：提醒间隔 ${effInterval()} 分钟（弹窗内可调 ${INTERVAL_MIN}–${INTERVAL_MAX}）；备份目录 ${effBackupDir()}；备份格式 ${effBackupMode() === "human" ? "人话版（可读 .txt）" : "鱼话版（原始 .zstd）"}${backupDisabledFor(effBackupDir()) ? "（配置无效：位于会话目录内）" : ""}`,
   );
 }

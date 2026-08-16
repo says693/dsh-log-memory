@@ -9,6 +9,10 @@ DSH（Deepseek Harness）插件：**打开 Web 即弹窗守护会话日志**—�
 - 🚪 **打开 Web 即弹窗**：每次打开 DSH 界面立即弹出守护面板（勾选「今日不再提醒」后当日不再打扰）
 - 💾 **弹窗内询问是否备份**：「立即备份到文件夹」一键把 `~/.dsh/sessions` 下所有 `session.jsonl` / `session.jsonl.zstd` **增量复制**到备份文件夹（按「路径:大小:mtime」跳过未变化文件，完整保留 `<工作目录根>/<会话 id>/` 目录结构，索引持久化）
 - ⏰ **弹窗内设定提醒时间**：预设档（10 分钟 / 30 分钟 / 1 小时 / 2 小时 / 3 小时）+ 滑杆自由微调，范围 **10 分钟 – 3 小时**，改动即保存并立即重排定时器，重启不丢
+- 🎚️ **备份格式二选一（双钮自由切换）**：
+  - **🐟 鱼话版**：原始 `.zstd` 压缩包，机器格式，可用于恢复
+  - **🧑 人话版**：每个会话渲染成可直接阅读的 `.txt` 聊天记录（标题/时间/token 用量档案头 + 按轮次排版的用户消息、助手思考与正文、工具调用与结果）
+  - 两种格式各自维护独立增量索引，切换后首次备份为该格式全量，之后恢复增量；选择持久化
 - 📁 **首次安装引导**：安装后的第一个弹窗会要求确认/填写备份文件夹（绝对路径），运行期间也可随时在弹窗里修改
 - 📅 **今日不再提醒**：按北京时间自然日静音，跨天自动恢复
 - 🔒 **安全边界**：HTTP 路由仅接受同源 POST；备份是纯本机文件复制，不联网、不上报任何数据
@@ -51,6 +55,7 @@ DSH（Deepseek Harness）插件：**打开 Web 即弹窗守护会话日志**—�
 |---|---|---|
 | `intervalMinutes` | `30` | 初始提醒间隔（分钟），需在 10–180 内 |
 | `backupDir` | `''` | 初始备份文件夹（绝对路径）；留空使用 `<用户主目录>/dsh-log-memory-backups` |
+| `backupMode` | `'fish'` | 初始备份格式：`fish`（鱼话版 .zstd）/ `human`（人话版 .txt） |
 | `debug` | `false` | `true` 时：启动 20 秒后先弹一次提醒，并开放 `POST /ds-log-memory/test-remind` |
 
 ## HTTP 路由
@@ -58,7 +63,7 @@ DSH（Deepseek Harness）插件：**打开 Web 即弹窗守护会话日志**—�
 | 路由 | 方法 | 说明 |
 |---|---|---|
 | `/ds-log-memory/state` | GET | 状态：设置、首次引导标志、间隔范围、当前提醒、上次备份、下次提醒时间 |
-| `/ds-log-memory/settings` | POST | 运行时设置：`{ intervalMinutes?, backupDir? }`（间隔钳制 10–180；文件夹须为绝对路径且不在会话目录内） |
+| `/ds-log-memory/settings` | POST | 运行时设置：`{ intervalMinutes?, backupDir?, backupMode? }`（间隔钳制 10–180；文件夹须为绝对路径且不在会话目录内；格式 fish/human 二选一） |
 | `/ds-log-memory/ack` | POST | 关闭当前提醒 |
 | `/ds-log-memory/mute-today` | POST | 今日不再提醒 |
 | `/ds-log-memory/backup` | POST | 立即增量备份 |
