@@ -390,9 +390,8 @@ window.__ModuleLoader__.load({
       backupBtn.addEventListener("click", () => void runBackup());
       skipBtn.addEventListener("click", () => closeModal(checkInput.checked));
       close.addEventListener("click", () => closeModal(checkInput.checked));
-      root.addEventListener("click", (e) => {
-        if (e.target === root) closeModal(checkInput.checked);
-      });
+      // 注意：不响应「点击遮罩关闭」——全屏遮罩下误触率太高（弹窗会一
+      // 直挡着界面直到明确选择 × / 本次跳过 / 好的，避免误关后干等下个周期）。
 
       modal.appendChild(head);
       modal.appendChild(sub);
