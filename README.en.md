@@ -25,7 +25,18 @@ A DSH (Deepseek Harness) plugin that **pops up a guardian panel for your session
 
 ## Install
 
-### Option 1: Manual copy
+### Option 1: dsh CLI (recommended)
+
+```sh
+dsh plugin --profile web add github:says693/dsh-log-memory
+```
+
+Restart DSH (Deepseek Harness EAC) afterwards. **The first time you open the Web UI, the wizard panel pops up.**
+
+> Users of the community [plugin-registry](https://github.com/dsh-external/plugin-registry) can also install from "Settings → Plugins".
+> Run `dsh --profile web --dump-config` to confirm the plugin made it into the final config. To hack on the source, clone the repo and run `dsh plugin --profile web add .` inside it.
+
+### Option 2: Manual copy
 
 1. Copy this folder into your DSH profile's dependency directory:
 
@@ -43,11 +54,7 @@ A DSH (Deepseek Harness) plugin that **pops up a guardian panel for your session
 
    and append `"dsh-log-memory"` to the end of the `dsh.profile.bundles` array.
 
-3. Restart DSH (Deepseek Harness EAC). **The first time you open the Web UI, the wizard panel pops up.**
-
-### Option 2: Local dependency
-
-Keep this folder anywhere permanent, then do only step 2 of Option 1 (point the `file:` dependency at it) and restart.
+3. Restart DSH. **The first time you open the Web UI, the wizard panel pops up.**
 
 ## Configuration
 

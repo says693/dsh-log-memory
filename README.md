@@ -25,7 +25,18 @@ DSH（Deepseek Harness）插件：**打开 Web 即弹窗守护会话日志**—�
 
 ## 安装
 
-### 方式一：手动安装
+### 方式一：dsh 命令安装（推荐）
+
+```sh
+dsh plugin --profile web add github:says693/dsh-log-memory
+```
+
+安装后重启 DSH（Deepseek Harness EAC）。**首次打开 Web 即弹出引导面板**。
+
+> 使用社区 [plugin-registry](https://github.com/dsh-external/plugin-registry) 的用户也可以在「设置 → 插件」里搜索安装。
+> 可运行 `dsh --profile web --dump-config` 确认插件已进入最终配置；需要改源码时，克隆仓库后在仓库目录运行 `dsh plugin --profile web add .`。
+
+### 方式二：手动安装
 
 1. 把本文件夹复制到 DSH 的 profile 依赖目录：
 
@@ -47,11 +58,7 @@ DSH（Deepseek Harness）插件：**打开 Web 即弹窗守护会话日志**—�
    "dsh-log-memory"
    ```
 
-3. 重启 DSH（Deepseek Harness EAC）。**首次打开 Web 即弹出引导面板**。
-
-### 方式二：作为本地依赖安装
-
-把本文件夹放到任意固定位置，然后执行方式一的第 2 步（`file:` 依赖指向该位置）并重启。
+3. 重启 DSH。**首次打开 Web 即弹出引导面板**。
 
 ## 配置
 
