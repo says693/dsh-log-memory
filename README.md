@@ -1,5 +1,11 @@
 # dsh-log-memory 🐋
 
+**简体中文 | [English](./README.en.md)**
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+[![DSH Plugin](https://img.shields.io/badge/DSH-Plugin-4c1)](https://github.com/topics/dsh-plugin)
+[![Version](https://img.shields.io/badge/version-1.3.0-green.svg)](./package.json)
+
 DSH（Deepseek Harness）插件：**打开 Web 即弹窗守护会话日志**——弹窗里能备份、能调提醒间隔、能选备份文件夹。
 
 > 会话日志是和 AI 助手的所有对话记忆——文件损坏、误删、格式迁移翻车时，一份独立备份就是救命的。
