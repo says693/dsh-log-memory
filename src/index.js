@@ -29,7 +29,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, relative, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import zlib from "node:zlib";
 
 /** 稳定插件名（profile 组合中的行 id）。 */
@@ -760,6 +760,53 @@ export function apply(ctx, config = {}) {
       } catch (error) {
         log("warn", `backup failed: ${error instanceof Error ? error.message : String(error)}`);
         sendJson(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) });
+      }
+    });
+
+    // 目录浏览：弹窗内点选备份文件夹（仅列子目录、GET、无副作用；不暴露文件内容）。
+    route("/ds-log-memory/browse", (req, res) => {
+      if (req.method !== "GET") {
+        res.writeHead(405, { Allow: "GET" });
+        res.end();
+        return;
+      }
+      let dir = "";
+      try {
+        const u = new URL(req.url ?? "/", "http://127.0.0.1");
+        dir = (u.searchParams.get("path") ?? "").trim();
+      } catch {
+        sendJson(res, 400, { ok: false, error: "bad query" });
+        return;
+      }
+      if (dir === "") dir = homedir(); // 未指定则从用户主目录开始浏览
+      if (!ABSOLUTE_RE.test(dir)) {
+        sendJson(res, 400, { ok: false, error: "需为绝对路径（例如 H:/ 或 D:\\）" });
+        return;
+      }
+      try {
+        const resolved = resolve(dir);
+        const names = [];
+        for (const ent of readdirSync(resolved, { withFileTypes: true })) {
+          if (ent.isDirectory()) {
+            names.push(ent.name);
+          } else if (ent.isSymbolicLink()) {
+            try {
+              if (statSync(join(resolved, ent.name)).isDirectory()) names.push(ent.name);
+            } catch {
+              /* 坏链接跳过 */
+            }
+          }
+        }
+        names.sort((a, b) => a.localeCompare(b, "zh-CN"));
+        const parent = dirname(resolved);
+        sendJson(res, 200, {
+          ok: true,
+          path: resolved,
+          parent: parent !== resolved ? parent : null,
+          dirs: names.slice(0, 300).map((n) => ({ name: n, path: join(resolved, n) })),
+        });
+      } catch {
+        sendJson(res, 400, { ok: false, error: "无法读取该路径（不存在、无权限或非目录）" });
       }
     });
 

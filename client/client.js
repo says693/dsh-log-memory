@@ -39,6 +39,20 @@ window.__ModuleLoader__.load({
         ".dslm_first{font-size:12px;color:var(--dsw-alias-state-warning-primary,#f2b24c);background:rgba(242,178,76,.12);border:1px solid rgba(242,178,76,.3);border-radius:8px;padding:6px 10px;margin-bottom:10px}",
         ".dslm_input{width:100%;box-sizing:border-box;padding:7px 10px;border-radius:8px;border:1px solid var(--dsw-alias-border-primary,rgba(255,255,255,.14));background:rgba(0,0,0,.25);color:var(--dsw-alias-label-primary,#e8e8ea);font-size:12.5px;font-family:inherit}",
         ".dslm_input:focus{outline:none;border-color:var(--dsw-alias-accent-primary,#4c8dff)}",
+        ".dslm_folder_row{display:flex;gap:8px}",
+        ".dslm_browse_btn{flex:0 0 auto;padding:7px 12px;border-radius:8px;border:1px solid var(--dsw-alias-border-primary,rgba(255,255,255,.14));background:rgba(255,255,255,.06);color:var(--dsw-alias-label-primary,#e8e8ea);font-size:12.5px;cursor:pointer;font-family:inherit}",
+        ".dslm_browse_btn:hover{background:rgba(255,255,255,.12)}",
+        ".dslm_browser{margin-top:8px;border:1px solid var(--dsw-alias-border-primary,rgba(255,255,255,.12));border-radius:9px;background:rgba(0,0,0,.18);padding:8px 10px}",
+        ".dslm_brow_head{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px}",
+        ".dslm_crumb{flex:1;min-width:120px;font-size:11.5px;color:var(--dsw-alias-label-tertiary,#9a9aa2);word-break:break-all}",
+        ".dslm_mini_btn{padding:3px 9px;border-radius:7px;border:1px solid var(--dsw-alias-border-primary,rgba(255,255,255,.16));background:rgba(255,255,255,.06);color:var(--dsw-alias-label-secondary,#b6b6bd);font-size:11.5px;cursor:pointer;font-family:inherit}",
+        ".dslm_mini_btn:hover{background:rgba(255,255,255,.12)}",
+        ".dslm_jump{flex:1;min-width:140px;padding:4px 8px;border-radius:7px;border:1px solid var(--dsw-alias-border-primary,rgba(255,255,255,.14));background:rgba(0,0,0,.25);color:var(--dsw-alias-label-primary,#e8e8ea);font-size:11.5px;font-family:inherit}",
+        ".dslm_jump:focus{outline:none;border-color:var(--dsw-alias-accent-primary,#4c8dff)}",
+        ".dslm_dir_list{max-height:170px;overflow-y:auto;border-top:1px solid var(--dsw-alias-border-primary,rgba(255,255,255,.08))}",
+        ".dslm_dir_item{display:block;width:100%;text-align:left;padding:4px 8px;border:none;background:none;color:var(--dsw-alias-label-secondary,#b6b6bd);cursor:pointer;border-radius:6px;font-size:12.5px;font-family:inherit;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+        ".dslm_dir_item:hover{background:rgba(255,255,255,.08);color:var(--dsw-alias-label-primary,#e8e8ea)}",
+        ".dslm_brow_foot{display:flex;justify-content:flex-end;margin-top:8px}",
         ".dslm_mode_row{display:flex;gap:10px}",
         ".dslm_mode{flex:1;padding:9px 10px;border-radius:10px;border:1px solid var(--dsw-alias-border-primary,rgba(255,255,255,.16));background:rgba(255,255,255,.05);color:var(--dsw-alias-label-primary,#e8e8ea);font-size:13px;cursor:pointer;font-family:inherit;text-align:center;line-height:1.5}",
         ".dslm_mode:hover{background:rgba(255,255,255,.1)}",
@@ -203,8 +217,115 @@ window.__ModuleLoader__.load({
       folderInput.className = "dslm_input";
       folderInput.value = s.backupDir;
       folderInput.spellcheck = false;
+      const folderRow = document.createElement("div");
+      folderRow.className = "dslm_folder_row";
+      const browseBtn = document.createElement("button");
+      browseBtn.type = "button";
+      browseBtn.className = "dslm_browse_btn";
+      browseBtn.textContent = "📁 浏览…";
+      folderRow.appendChild(folderInput);
+      folderRow.appendChild(browseBtn);
       folderSection.appendChild(folderLabel);
-      folderSection.appendChild(folderInput);
+      folderSection.appendChild(folderRow);
+
+      // -- 弹窗内文件夹浏览器（点选代替手填；环境不支持 OS 对话框，用服务端列目录实现） --
+      let browserEl = null;
+      let curBrowsePath = "";
+      const closeBrowser = () => {
+        if (browserEl !== null) {
+          browserEl.remove();
+          browserEl = null;
+        }
+      };
+      const renderBrowse = (j) => {
+        if (browserEl === null) return;
+        browserEl.innerHTML = "";
+        const head = document.createElement("div");
+        head.className = "dslm_brow_head";
+        if (j.parent !== null) {
+          const up = document.createElement("button");
+          up.type = "button";
+          up.className = "dslm_mini_btn";
+          up.textContent = "⬆ 上一级";
+          up.addEventListener("click", () => void loadBrowse(j.parent));
+          head.appendChild(up);
+        }
+        const crumb = document.createElement("span");
+        crumb.className = "dslm_crumb";
+        crumb.textContent = "当前：" + j.path;
+        head.appendChild(crumb);
+        const jump = document.createElement("input");
+        jump.type = "text";
+        jump.className = "dslm_jump";
+        jump.placeholder = "粘贴路径回车跳转";
+        jump.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            void loadBrowse(jump.value.trim());
+          }
+        });
+        head.appendChild(jump);
+        const list = document.createElement("div");
+        list.className = "dslm_dir_list";
+        if (j.dirs.length === 0) {
+          const empty = document.createElement("div");
+          empty.className = "dslm_crumb";
+          empty.style.padding = "6px 8px";
+          empty.textContent = "（这里没有子文件夹）";
+          list.appendChild(empty);
+        }
+        for (const d of j.dirs) {
+          const it = document.createElement("button");
+          it.type = "button";
+          it.className = "dslm_dir_item";
+          it.textContent = "📁 " + d.name;
+          it.title = d.path;
+          it.addEventListener("click", () => void loadBrowse(d.path));
+          list.appendChild(it);
+        }
+        const foot = document.createElement("div");
+        foot.className = "dslm_brow_foot";
+        const pick = document.createElement("button");
+        pick.type = "button";
+        pick.className = "dslm_mini_btn";
+        pick.style.color = "var(--dsw-alias-state-success-primary,#5ec98f)";
+        pick.textContent = "✓ 就用这个文件夹";
+        pick.addEventListener("click", () => {
+          folderInput.value = curBrowsePath;
+          closeBrowser();
+          void saveFolderNow(curBrowsePath);
+        });
+        foot.appendChild(pick);
+        browserEl.appendChild(head);
+        browserEl.appendChild(list);
+        browserEl.appendChild(foot);
+      };
+      const loadBrowse = async (p) => {
+        clearError();
+        try {
+          const res = await fetch("/ds-log-memory/browse" + (p !== "" ? "?path=" + encodeURIComponent(p) : ""), { cache: "no-store" });
+          const j = await res.json();
+          if (res.ok !== true || j.ok !== true) {
+            showError(j.error ?? "无法读取该路径");
+            return;
+          }
+          curBrowsePath = j.path;
+          renderBrowse(j);
+        } catch (e) {
+          showError(e instanceof Error ? e.message : String(e));
+        }
+      };
+      browseBtn.addEventListener("click", () => {
+        if (browserEl !== null) {
+          closeBrowser();
+          return;
+        }
+        browserEl = document.createElement("div");
+        browserEl.className = "dslm_browser";
+        folderSection.appendChild(browserEl);
+        const v = folderInput.value.trim();
+        void loadBrowse(/^[A-Za-z]:[\\/]|^\\\\|^\//.test(v) ? v : "");
+      });
 
       // -- 备份格式：鱼话版 / 人话版（互斥双钮，按下/抬起，可自由切换） --
       const modeSection = document.createElement("div");
@@ -362,6 +483,22 @@ window.__ModuleLoader__.load({
             savedTip.textContent = `已保存：每 ${intervalText(res.settings.intervalMinutes)}提醒一次（下次 ${fmtClock(res.nextRemindAtMs)}）`;
           } else {
             showError(res !== null && typeof res === "object" && typeof res.error === "string" ? res.error : "保存失败");
+          }
+        } catch (e) {
+          showError(e instanceof Error ? e.message : String(e));
+        }
+      }
+
+      // -- 立即保存备份文件夹（浏览面板「就用这个文件夹」用） --
+      async function saveFolderNow(dir) {
+        clearError();
+        try {
+          const res = await post("/ds-log-memory/settings", { backupDir: dir });
+          if (res !== null && typeof res === "object" && res.ok === true) {
+            lastState = { ...lastState, settings: res.settings };
+            savedTip.textContent = `备份文件夹已更新：${res.settings.backupDir}`;
+          } else {
+            showError(res !== null && typeof res === "object" && typeof res.error === "string" ? res.error : "文件夹保存失败");
           }
         } catch (e) {
           showError(e instanceof Error ? e.message : String(e));
